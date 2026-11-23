@@ -94,11 +94,16 @@ def prioritize(
     """결정적 규칙으로 우선순위·처리 기한·근거를 매긴다."""
     from datetime import date
 
-    from .intel import apply_hints
+    from .intel import enrich
     from .priority import load_policy, prioritize as run
 
     bundle = load_bundle(bundle_path)
-    apply_hints(bundle)
+    enrich(bundle)
+    intel = bundle.meta["intel"]
+    typer.echo(f"위협 정보: KEV {intel['kev']['origin']}({intel['kev']['date']}), "
+               f"EPSS {intel['epss']['origin']}({intel['epss']['date']}), 스캐너 보조값 {intel['hints_used']}건")
+    for w in intel["warnings"]:
+        typer.secho(f"  경고: {w}", fg="yellow")
     run(bundle, load_policy(policy), date.fromisoformat(as_of) if as_of else None)
     save_bundle(bundle, out or bundle_path)
     print_results(bundle, top)
@@ -136,6 +141,29 @@ def eval_cmd(
         out.parent.mkdir(parents=True, exist_ok=True)
         out.write_text(md, encoding="utf-8")
         typer.echo(f"저장: {out}")
+
+
+@app.command("fetch-intel")
+def fetch_intel(
+    only: Optional[str] = typer.Option(None, "--only", help="kev 또는 epss 만"),
+) -> None:
+    """CISA KEV 목록과 EPSS 전체 점수 파일을 내려받아 data/cache 에 저장한다."""
+    from .intel import fetch_all
+    from .intel.cache import cache_dir
+
+    report = fetch_all([only] if only else ["kev", "epss"])
+    ok = True
+    for name, r in report.items():
+        if r["ok"]:
+            extra = r.get("date_released") or r.get("score_date") or ""
+            typer.echo(f"  {name.upper()}: {r['records']:,}건, {r['bytes'] / 1e6:.1f}MB, 기준 {extra} ← {r['url']}")
+        else:
+            ok = False
+            typer.secho(f"  {name.upper()}: 실패 (기존 캐시 {'유지' if r['kept'] else '없음'})", fg="red")
+            typer.secho(f"  {r['error']}", fg="red")
+    typer.echo(f"캐시 위치: {cache_dir()}")
+    if not ok:
+        raise typer.Exit(1)
 
 
 if __name__ == "__main__":

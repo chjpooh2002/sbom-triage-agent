@@ -1,0 +1,16 @@
+# 외부 위협 정보 출처. 첫 주소가 실패하면 다음 주소를 시도한다.
+kev:
+  file: kev.json
+  urls:
+    - https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json
+    - https://raw.githubusercontent.com/cisagov/kev-data/develop/known_exploited_vulnerabilities.json
+epss:
+  file: epss_scores.csv.gz
+  urls:
+    - https://epss.empiricalsecurity.com/epss_scores-current.csv.gz
+    - https://epss.cyentia.com/epss_scores-current.csv.gz
+# 이 시간보다 오래된 캐시는 경고만 하고 그대로 쓴다(현장 네트워크가 없을 수 있으므로)
+max_age_hours: 48
+timeout_seconds: 60
+cache_dir: data/cache
+snapshot_dir: data/snapshot
