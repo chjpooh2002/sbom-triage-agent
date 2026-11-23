@@ -47,7 +47,7 @@ def test_rule_pick_fixes_whole_group_and_skips_prerelease():
 
 @pytest.mark.parametrize("target,reason", [
     ("2.99.0", "레지스트리에 없는"),           # 존재하지 않는 버전(환각)
-    ("2.15.0", "남는 취약점"),                 # 존재하지만 다른 취약점 범위 안
+    ("2.15.0", "남는 급한 취약점"),                 # 존재하지만 다른 취약점 범위 안
     ("2.12.4", "높지 않음"),                   # 설치 버전보다 낮음
     ("3.0.0-beta2", "정식 버전이 아님"),
 ])
@@ -162,3 +162,19 @@ def test_openai_provider_parses_json_schema_output():
     client = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=create)))
     d = OpenAIProvider(model="m", client=client).draft({})
     assert d.steps == ["a"] and sent["response_format"]["json_schema"]["strict"] is True
+
+
+def test_prefers_same_major_when_only_low_tier_issues_need_major_upgrade():
+    comp = Component(id="pkg:maven/g/lib@5.3.13", name="lib", group="g", version="5.3.13", ecosystem="maven")
+    urgent = Finding(key="u", component=comp, vulnerability=Vulnerability(id="CVE-U", fixed_versions=["5.3.18"]))
+    low = Finding(key="l", component=comp, vulnerability=Vulnerability(id="CVE-L", fixed_versions=["6.0.0"],
+                                                                       affected_ranges=["<6.0.0"]))
+    avail = ["5.3.18", "5.3.39", "6.0.0", "6.1.0"]
+    target, notes = rule_pick([urgent, low], avail, required={"CVE-U"})
+    assert target == "5.3.18" and "메이저 업그레이드" in " ".join(notes)
+    assert verify("5.3.18", [urgent, low], avail, required={"CVE-U"}).ok
+    assert not verify("5.3.18", [urgent, low], avail, required={"CVE-U", "CVE-L"}).ok
+    # 급한 건이 없으면 같은 메이저에서 줄일 수 있는 만큼 줄인다
+    assert rule_pick([urgent, low], avail, required=set())[0] == "5.3.18"
+    # 급한 취약점이 메이저 업그레이드로만 고쳐지면 메이저를 올린다
+    assert rule_pick([urgent, low], avail, required={"CVE-L"})[0] == "6.0.0"

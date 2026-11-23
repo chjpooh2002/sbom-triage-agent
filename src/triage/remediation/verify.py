@@ -47,24 +47,43 @@ def candidate_versions(group: list[Finding], available: Optional[list[str]]) -> 
     return sorted(pool, key=lambda v: V(v, eco))
 
 
-def rule_pick(group: list[Finding], available: Optional[list[str]]) -> tuple[Optional[str], list[str]]:
-    """묶음의 취약점을 모두 해결하는 가장 작은 버전. 같은 메이저 안에서 먼저 찾는다."""
+def rule_pick(group: list[Finding], available: Optional[list[str]],
+              required: Optional[set[str]] = None) -> tuple[Optional[str], list[str]]:
+    """규칙 선택. required(반드시 고칠 취약점, 보통 P1·P2·KEV)가 주어지면 아래 순서로 고른다.
+
+    1) 같은 메이저에서 전부 해결  2) 같은 메이저에서 required 만이라도 해결(나머지는 메모)
+    3) 메이저를 바꿔 전부 해결   4) 남는 것이 가장 적은 버전
+    불필요한 메이저 업그레이드(호환성 위험)를 급하지 않은 취약점 때문에 권하지 않기 위함이다.
+    """
     inst = group[0].component.version
+    req = required if required is not None else {f.vulnerability.id for f in group}
     cands = candidate_versions(group, available)
+    same_major = [v for v in cands if major(v) == major(inst)]
+    clean_same = [v for v in same_major if not remaining(v, group)]
+    if clean_same:
+        return clean_same[0], [f"같은 메이저({major(inst)}.x) 안에서 모든 취약점을 해결하는 최소 버전"]
+    # 급한 건을 모두 고치고, 실제로 하나라도 줄이는 같은 메이저 버전(급한 건이 없으면 가장 많이 줄이는 버전)
+    req_same = [v for v in same_major if not (set(remaining(v, group)) & req) and len(remaining(v, group)) < len(group)]
+    if req_same:
+        v = min(req_same, key=lambda x: (len(remaining(x, group)), V(x, _eco(group))))
+        left = remaining(v, group)
+        head = f"급한 취약점 {len(req)}건을 모두 해결" if req else f"취약점 {len(group) - len(left)}건 해결(급한 건 없음)"
+        return v, [f"같은 메이저({major(inst)}.x) 안에서 {head}",
+                   f"남는 낮은 등급 {len(left)}건({', '.join(left[:5])}{' 외' if len(left) > 5 else ''})은 메이저 업그레이드를 별도 과제로 계획"]
     clean = [v for v in cands if not remaining(v, group)]
-    same = [v for v in clean if major(v) == major(inst)]
-    if same:
-        return same[0], [f"같은 메이저({major(inst)}.x) 안에서 모든 취약점을 해결하는 최소 버전"]
     if clean:
         return clean[0], [f"같은 메이저에는 해결 버전이 없어 메이저 버전 변경({major(inst)} → {major(clean[0])}) 필요"]
-    if cands:   # 전부는 못 고친다: 가장 많이 줄이는 버전
-        best = min(cands, key=lambda v: (len(remaining(v, group)), V(v, _eco(group))))
+    if cands:
+        best = min(cands, key=lambda v: (len(set(remaining(v, group)) & req), len(remaining(v, group)), V(v, _eco(group))))
         return best, [f"모든 취약점을 해결하는 버전 없음 → 남는 취약점이 가장 적은 {best} 선택"]
     return None, ["수정 버전 정보 없음 → 버전 업그레이드로 해결 불가, 완화책 필요"]
 
 
-def verify(target: Optional[str], group: list[Finding], available: Optional[list[str]]) -> Check:
+def verify(target: Optional[str], group: list[Finding], available: Optional[list[str]],
+           required: Optional[set[str]] = None) -> Check:
+    """required 가 주어지면 그 취약점은 반드시 해결해야 통과, 나머지가 남으면 경고로 기록한다."""
     eco, inst = _eco(group), group[0].component.version
+    req = required if required is not None else {f.vulnerability.id for f in group}
     notes: list[str] = []
     if not target:
         return Check(False, None, ["목표 버전 없음"])
@@ -83,12 +102,16 @@ def verify(target: Optional[str], group: list[Finding], available: Optional[list
     if is_prerelease(target):
         return Check(False, target, notes + ["정식 버전이 아님(rc·beta 등)"])
     left = remaining(target, group)
+    must = [x for x in left if x in req]
+    if must:
+        return Check(False, target, notes + [f"이 버전으로도 남는 급한 취약점: {', '.join(must)}"], still_affected=left)
     if left:
-        return Check(False, target, notes + [f"이 버전으로도 남는 취약점: {', '.join(left)}"], still_affected=left)
-    notes.append(f"묶음의 취약점 {len(group)}건 모두 영향 범위 밖")
+        notes.append(f"급한 취약점은 모두 해결, 낮은 등급 {len(left)}건은 남음({', '.join(left[:5])}{' 외' if len(left) > 5 else ''})")
+    else:
+        notes.append(f"묶음의 취약점 {len(group)}건 모두 영향 범위 밖")
     if variant(inst) and variant(target) != variant(inst):
         notes.append(f"변형이 다름({variant(inst)} → {variant(target) or '없음'}): 의도한 것인지 확인 필요")
     mc = major(target) != major(inst)
     if mc:
         notes.append(f"메이저 버전 변경({major(inst)} → {major(target)}): 호환성 확인 필요")
-    return Check(True, target, notes, major_change=mc)
+    return Check(True, target, notes, still_affected=left, major_change=mc)
