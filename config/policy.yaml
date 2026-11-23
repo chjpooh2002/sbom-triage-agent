@@ -1,0 +1,62 @@
+# 우선순위 정책. 기준값은 전부 여기서 바꾼다(코드 수정 불필요).
+# 계층 순서는 고정: 1) 영향 없음  2) KEV  3) 가중 점수(+보정 규칙)
+version: 1
+name: 기본 정책
+
+tiers:
+  P1: {label: 긴급, action: 즉시 조치}
+  P2: {label: 높음, action: 다음 배포에 포함}
+  P3: {label: 보통, action: 정기 업데이트 때}
+  P4: {label: 낮음, action: 모니터링}
+
+layers:
+  not_affected:
+    enabled: true
+    tier: P4            # VEX 등으로 영향 없음이 확인된 건
+  kev:
+    enabled: true
+    tier: P1            # 실제 악용이 확인된 건은 점수와 무관하게 이 등급
+
+score:
+  # 가중 평균(합이 1 이 아니어도 합으로 나눈다)
+  weights:
+    epss: 0.40
+    cvss: 0.30
+    exposure: 0.20
+    criticality: 0.10
+  # EPSS 원값(30일 내 악용 확률)은 대부분 0 근처에 몰려 있어 구간 보간으로 0~1 로 편다: [EPSS, 정규화값]
+  epss_scale:
+    - [0.0, 0.0]
+    - [0.01, 0.2]
+    - [0.1, 0.6]
+    - [0.5, 0.9]
+    - [1.0, 1.0]
+  thresholds:           # 점수가 이 값 이상이면 해당 등급(위에서부터 비교), 모두 미만이면 P4
+    P1: 0.80
+    P2: 0.60
+    P3: 0.35
+
+# 값이 없을 때 쓸 정규화값(0~1). 모르는 것은 위험한 쪽으로 가정한다
+missing:
+  epss: 0.0
+  cvss_by_severity: {critical: 9.5, high: 8.0, medium: 5.5, low: 2.5, unknown: 5.0}
+  exposure: 1.0         # 외부 노출 여부를 모르면 노출된 것으로
+  criticality: 0.5      # 중요도를 모르면 중간
+
+# 점수 계층의 보정 규칙(위에서부터 모두 적용). when 의 조건을 모두 만족하면 min_tier/max_tier 적용
+# 조건: epss_gte, cvss_gte, internet_exposed, criticality_gte, criticality_lte, direct, has_fix
+overrides:
+  - name: 외부 노출 + 악용 가능성 높음
+    when: {internet_exposed: true, epss_gte: 0.1}
+    min_tier: P2
+  - name: 외부 노출 + 치명적 심각도
+    when: {internet_exposed: true, cvss_gte: 9.0}
+    min_tier: P2
+  - name: 내부망 저중요도 자산
+    when: {internet_exposed: false, criticality_lte: 2}
+    max_tier: P3
+
+# 처리 기한(일). null 이면 기한 없음
+due_days: {P1: 7, P2: 30, P3: 90, P4: null}
+# 외부 노출 자산은 기한에 이 비율을 곱한다(올림)
+exposed_due_factor: 0.5
