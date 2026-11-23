@@ -1,0 +1,18 @@
+# 환경·비밀
+.env
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# 실행 산출물
+out/
+
+# 외부 데이터 캐시(대용량). manifest만 남기지 않고 통째로 무시하고, 테스트용 발췌본은 data/snapshot/에 둔다
+data/cache/
+# 현장 데이터는 절대 커밋하지 않는다
+data/field/
+
+# 샘플 앱 빌드 결과
+samples/demo-app/build/
+samples/demo-app/.gradle/
