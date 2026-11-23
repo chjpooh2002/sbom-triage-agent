@@ -36,6 +36,7 @@ class Component(BaseModel):
     ecosystem: str = ""                      # maven, npm, pypi …(purl type)
     purl: str = ""
     direct: Optional[bool] = None            # 직접 의존성인가(모르면 None)
+    direct_evidence: int = 0                 # direct 판단 근거의 깊이(의존 그래프 최대 깊이). 출처가 엇갈리면 큰 쪽을 믿는다
     dependency_paths: list[list[str]] = []   # 루트 → … → 이 구성요소 (구성요소 id)
     licenses: list[str] = []
     sources: list[str] = []                  # 이 구성요소를 보고한 입력 파일들

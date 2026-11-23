@@ -87,3 +87,31 @@ def test_cyclonedx_vex_not_affected(tmp_path):
     b = ingest_paths([f"{p}=app", grype])
     f = next(x for x in b.findings if x.vulnerability.id == LOG4SHELL)
     assert f.status == Status.not_affected and "code_not_reachable" in f.status_note
+
+
+def test_trivy_jar_scan_without_package_ids_links_to_right_component(tmp_path):
+    """trivy 의 jar 스캔은 Packages[].ID 가 비어 있다. 이때 취약점이 엉뚱한 패키지에 붙으면 안 된다."""
+    import json
+    doc = {"SchemaVersion": 2, "ArtifactName": "app.jar", "Results": [{
+        "Target": "Java", "Class": "lang-pkgs", "Type": "jar",
+        "Packages": [
+            {"Name": "org.apache.logging.log4j:log4j-core", "Version": "2.14.1",
+             "Identifier": {"PURL": "pkg:maven/org.apache.logging.log4j/log4j-core@2.14.1", "UID": "u1"}},
+            {"Name": "org.yaml:snakeyaml", "Version": "1.29",
+             "Identifier": {"PURL": "pkg:maven/org.yaml/snakeyaml@1.29", "UID": "u2"}}],
+        "Vulnerabilities": [{"VulnerabilityID": LOG4SHELL, "PkgName": "org.apache.logging.log4j:log4j-core",
+                             "InstalledVersion": "2.14.1", "FixedVersion": "2.15.0",
+                             "PkgIdentifier": {"PURL": "pkg:maven/org.apache.logging.log4j/log4j-core@2.14.1", "UID": "u1"}}]}]}
+    p = tmp_path / "t.json"
+    p.write_text(json.dumps(doc), encoding="utf-8")
+    f = parse_file(p).findings[0]
+    assert f.component.id == LOG4J
+
+
+def test_demo_app_log4j_only_on_log4j_core():
+    demo = Path(__file__).resolve().parents[1] / "samples" / "demo-app" / "scan"
+    b = ingest_paths([str(demo)])
+    comps = {f.component.name for f in b.findings if f.vulnerability.id == LOG4SHELL}
+    assert comps == {"log4j-core"}
+    log4j = next(c for c in b.components if c.id == LOG4J)
+    assert log4j.direct is False and log4j.dependency_paths      # 전이 의존성으로 들어옴(Gradle SBOM)

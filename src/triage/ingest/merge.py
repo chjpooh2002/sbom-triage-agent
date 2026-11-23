@@ -31,10 +31,15 @@ def resolve_asset(p: ParsedInput, assets: list[AssetContext], explicit: Optional
 
 def _merge_component(base: Component, other: Component) -> Component:
     base.sources = list(dict.fromkeys(base.sources + other.sources))
-    if other.direct is True:
-        base.direct = True
-    elif base.direct is None:
-        base.direct = other.direct
+    # 직접/전이: 더 깊은 의존 그래프에서 나온 판단을 믿는다(평평한 jar 목록보다 빌드 도구 그래프).
+    # 깊이가 같으면 '직접'을 남긴다(하나라도 직접 선언이면 직접 조치 대상)
+    if other.direct is not None:
+        if base.direct is None or other.direct_evidence > base.direct_evidence:
+            base.direct, base.direct_evidence = other.direct, other.direct_evidence
+            if other.dependency_paths:
+                base.dependency_paths = list(other.dependency_paths)
+        elif other.direct_evidence == base.direct_evidence and other.direct:
+            base.direct = True
     for path in other.dependency_paths:
         if path not in base.dependency_paths and len(base.dependency_paths) < 3:
             base.dependency_paths.append(path)

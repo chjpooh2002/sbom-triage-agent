@@ -56,7 +56,9 @@ def remediate(bundle: TriageBundle, provider: Optional[Provider] = None, llm_lim
         available = list_versions(comp, offline=offline)
         if available is None:
             stats["registry_unknown"] += 1
-        rule_target, rule_notes = rule_pick(group, available)
+        # 반드시 고칠 취약점: 정책상 급한 등급(P1·P2) 또는 KEV. 비어 있으면 같은 메이저에서 가장 많이 줄이는 버전을 고른다
+        required = {f.vulnerability.id for f in group if results[f.key].tier.rank <= 2 or f.signals.kev.listed}
+        rule_target, rule_notes = rule_pick(group, available, required)
         ctx = build_context(group, results, bundle.asset(asset_id), candidate_versions(group, available),
                             rule_target, rule_notes)
         use_llm = provider.name != "template" and i < llm_limit
@@ -74,12 +76,12 @@ def remediate(bundle: TriageBundle, provider: Optional[Provider] = None, llm_lim
             if provider.name != "template":
                 notes.append(f"모델 호출 상한({llm_limit}묶음) 밖 → 템플릿 사용")
 
-        check = verify(draft.target_version, group, available)
+        check = verify(draft.target_version, group, available, required)
         final = check
         if not check.ok and draft.target_version != rule_target:
             stats["rejected_targets"] += 1
             notes.append(f"제안 버전 {draft.target_version} 기각({'; '.join(check.notes)}) → 규칙 선택 {rule_target}")
-            final = verify(rule_target, group, available) if rule_target else check
+            final = verify(rule_target, group, available, required) if rule_target else check
             if final.target:
                 draft.steps = [s.replace(str(draft.target_version), final.target) if draft.target_version else s
                                for s in draft.steps]
