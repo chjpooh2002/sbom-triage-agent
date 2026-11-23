@@ -72,5 +72,37 @@ def ingest(
     typer.echo(f"저장: {out}")
 
 
+def print_results(bundle: TriageBundle, top: int) -> None:
+    by_key = {f.key: f for f in bundle.findings}
+    typer.echo(f"{'순위':>4} {'등급':4} {'점수':>6} {'기한':10} {'계층':12} {'취약점':18} 구성요소 / 자산")
+    for r in bundle.results[:top]:
+        f = by_key[r.finding_key]
+        typer.echo(f"{r.rank:>4} {r.tier.value:4} {r.score:6.3f} {r.due_date or '-':10} {r.layer:12} "
+                   f"{f.vulnerability.id:18} {f.component.display} / {f.asset_id or '-'}")
+    counts = Counter(r.tier.value for r in bundle.results)
+    typer.echo("등급별: " + ", ".join(f"{t} {counts.get(t, 0)}" for t in ("P1", "P2", "P3", "P4")))
+
+
+@app.command()
+def prioritize(
+    bundle_path: Path = typer.Argument(Path("out/bundle.json")),
+    out: Optional[Path] = typer.Option(None, "-o", "--out", help="기본: 입력 파일에 덮어씀"),
+    policy: Optional[Path] = typer.Option(None, "--policy", help="정책 파일(기본 config/policy.yaml)"),
+    as_of: Optional[str] = typer.Option(None, "--as-of", help="기한 계산 기준일 YYYY-MM-DD(기본 오늘)"),
+    top: int = typer.Option(20, "--top"),
+) -> None:
+    """결정적 규칙으로 우선순위·처리 기한·근거를 매긴다."""
+    from datetime import date
+
+    from .intel import apply_hints
+    from .priority import load_policy, prioritize as run
+
+    bundle = load_bundle(bundle_path)
+    apply_hints(bundle)
+    run(bundle, load_policy(policy), date.fromisoformat(as_of) if as_of else None)
+    save_bundle(bundle, out or bundle_path)
+    print_results(bundle, top)
+
+
 if __name__ == "__main__":
     app()
