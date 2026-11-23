@@ -197,5 +197,34 @@ def remediate(
         typer.echo(f"  {f.component.display} → {r.target_version or '-'} [{mark}] {r.verify_notes[-1] if r.verify_notes else ''}")
 
 
+@app.command()
+def run(
+    inputs: list[str] = typer.Argument(..., help="입력 파일·폴더. 자산 직접 지정은 '경로=자산ID'"),
+    out_dir: Path = typer.Option(Path("out"), "-o", "--out-dir"),
+    provider: Optional[str] = typer.Option(None, "--provider"),
+    llm_limit: int = typer.Option(20, "--llm-limit"),
+    offline: bool = typer.Option(False, "--offline", help="레지스트리 조회 없이 캐시만 사용"),
+    as_of: Optional[str] = typer.Option(None, "--as-of", help="기한 기준일 YYYY-MM-DD"),
+    policy: Optional[Path] = typer.Option(None, "--policy"),
+    fmt: Optional[str] = typer.Option(None, "--format"),
+) -> None:
+    """정규화 → 보강 → 우선순위 → 조치안 → 보고서(md·xlsx)를 한 번에 실행한다."""
+    from datetime import date
+
+    from .pipeline import run as run_pipeline
+    from .report import summary
+
+    res = run_pipeline(inputs, out_dir, provider, llm_limit, offline,
+                       date.fromisoformat(as_of) if as_of else None, policy, fmt)
+    b = res.bundle
+    for w in b.meta.get("warnings", []) + b.meta["intel"]["warnings"] + b.meta["remediation"]["warnings"]:
+        typer.secho(f"  경고: {w}", fg="yellow")
+    print_results(b, 10)
+    s = summary(b)
+    typer.echo(f"조치 단위 {s['groups']}개(검증 {s['groups_verified']}), KEV {s['kev']}건")
+    for k, v in res.paths.items():
+        typer.echo(f"  {k}: {v}")
+
+
 if __name__ == "__main__":
     app()
