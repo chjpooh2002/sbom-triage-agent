@@ -29,6 +29,8 @@ def annotate(components: dict, edges: dict[str, list[str]], roots: list[str]) ->
                 got.append(new)
                 q.append((child, new))
     root_set = set(roots)
+    # 그래프 깊이: jar 안 라이브러리를 루트 아래 평평하게 나열한 SBOM(깊이 2)은 직접/전이를 구분해 주지 못한다
+    depth = max((len(p) for ps in paths.values() for p in ps), default=0)
     for ref, comp in components.items():
         if ref in root_set:
             continue
@@ -36,4 +38,5 @@ def annotate(components: dict, edges: dict[str, list[str]], roots: list[str]) ->
         if not ps:
             continue
         comp.direct = any(len(p) == 2 for p in ps)
+        comp.direct_evidence = depth
         comp.dependency_paths = [[components[r].id for r in p if r in components] for p in ps]
