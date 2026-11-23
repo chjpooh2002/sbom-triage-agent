@@ -166,5 +166,36 @@ def fetch_intel(
         raise typer.Exit(1)
 
 
+@app.command()
+def remediate(
+    bundle_path: Path = typer.Argument(Path("out/bundle.json")),
+    out: Optional[Path] = typer.Option(None, "-o", "--out"),
+    provider: Optional[str] = typer.Option(None, "--provider", help="anthropic | openai | template (기본: .env 의 LLM_PROVIDER)"),
+    llm_limit: int = typer.Option(20, "--llm-limit", help="모델을 부를 최대 묶음 수(급한 순). 나머지는 템플릿"),
+    offline: bool = typer.Option(False, "--offline", help="레지스트리 조회 없이 캐시만 사용"),
+) -> None:
+    """(자산, 구성요소) 묶음별 조치안을 만들고 목표 버전을 규칙으로 재검증한다."""
+    from .remediation import get_provider, remediate as run
+
+    bundle = load_bundle(bundle_path)
+    p = get_provider(provider)
+    run(bundle, p, llm_limit, offline)
+    save_bundle(bundle, out or bundle_path)
+    m = bundle.meta["remediation"]
+    for w in m["warnings"]:
+        typer.secho(f"  경고: {w}", fg="yellow")
+    typer.echo(f"공급자 {m['provider']}({m['model']}): 묶음 {m['groups']}개, 모델 호출 {m['llm_calls']}, 캐시 {m['llm_cache_hits']}, "
+               f"대체 {m['fallbacks']}, 제안 기각 {m['rejected_targets']}, 레지스트리 확인 불가 {m['registry_unknown']}")
+    seen = set()
+    for r in bundle.remediations:
+        f = bundle.finding(r.finding_key)
+        k = (f.asset_id, f.component.id)
+        if k in seen:
+            continue
+        seen.add(k)
+        mark = "검증됨" if r.verified else "미검증"
+        typer.echo(f"  {f.component.display} → {r.target_version or '-'} [{mark}] {r.verify_notes[-1] if r.verify_notes else ''}")
+
+
 if __name__ == "__main__":
     app()
