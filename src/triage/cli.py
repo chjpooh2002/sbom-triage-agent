@@ -104,5 +104,39 @@ def prioritize(
     print_results(bundle, top)
 
 
+@app.command("eval")
+def eval_cmd(
+    gold: Path = typer.Option(Path("eval/gold.csv"), "--gold"),
+    out: Optional[Path] = typer.Option(None, "-o", "--out", help="결과 마크다운(예: eval/results/2026-11-23.md)"),
+    policy: Optional[Path] = typer.Option(None, "--policy"),
+    check: bool = typer.Option(False, "--check", help="형식만 검증하고 채점하지 않음"),
+    force: bool = typer.Option(False, "--force", help="기존 결과 파일 덮어쓰기"),
+) -> None:
+    """정답 사례와 비교해 정확도를 계산한다(규칙 엔진 vs CVSS 단독)."""
+    from .evaluation import GoldError, load_gold, render_markdown, run_eval
+    from .priority import load_policy
+
+    try:
+        cases = load_gold(gold)
+    except GoldError as e:
+        typer.secho(str(e), fg="red")
+        raise typer.Exit(1)
+    reviewed = sum(c.reviewed for c in cases)
+    typer.echo(f"정답 {len(cases)}건 형식 확인 완료(사람 검증 {reviewed}건)")
+    if check:
+        return
+    pol = load_policy(policy)
+    scores, results = run_eval(cases, pol)
+    md = render_markdown(str(gold), cases, scores, results, pol)
+    typer.echo(md)
+    if out:
+        if out.exists() and not force:
+            typer.secho(f"{out} 이 이미 있습니다. 기록을 보존하려면 다른 이름을 쓰고, 덮어쓰려면 --force", fg="red")
+            raise typer.Exit(1)
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(md, encoding="utf-8")
+        typer.echo(f"저장: {out}")
+
+
 if __name__ == "__main__":
     app()
