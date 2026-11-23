@@ -1,0 +1,4 @@
+case_id,vuln_id,package,version,ecosystem,internet_exposed,criticality,kev,epss,cvss,severity,status,has_fix,direct,expected_tier,expected_order_group,rationale,source_url,reviewed
+EX1,CVE-2021-44228,pkg:maven/org.apache.logging.log4j/log4j-core,2.14.1,,Y,5,Y,0.9445,10.0,,affected,Y,N,P1,1,(예시·정답 아님) KEV 등재 + 외부 노출 핵심 서비스,https://www.cisa.gov/known-exploited-vulnerabilities-catalog,
+EX2,CVE-2022-38749,pkg:maven/org.yaml/snakeyaml,1.29,,N,2,N,0.0012,6.5,,affected,Y,Y,P3,2,(예시·정답 아님) 내부망 저중요도 + 악용 가능성 낮음,,
+EX3,CVE-2015-6420,pkg:maven/commons-collections/commons-collections,3.2.1,,Y,3,N,0.05,7.5,,not_affected,Y,Y,P4,3,(예시·정답 아님) VEX로 영향 없음 확인,,

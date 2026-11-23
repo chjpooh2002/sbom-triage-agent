@@ -1,0 +1,1 @@
+case_id,vuln_id,package,version,ecosystem,internet_exposed,criticality,kev,epss,cvss,severity,status,has_fix,direct,expected_tier,expected_order_group,rationale,source_url,reviewed
