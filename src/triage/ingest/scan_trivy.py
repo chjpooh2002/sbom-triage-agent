@@ -57,10 +57,16 @@ def parse(path: Path, data: dict) -> ParsedInput:
             if rel == "root":
                 continue
             c.direct = True if rel == "direct" else False if rel == "indirect" else None
+            c.direct_evidence = 3 if c.direct is not None else 0   # 빌드 도구가 알려 준 관계는 그래프 근거로 본다
             comps[c.id] = c
-            pkg_by_id[p.get("ID")] = c
+            # jar 스캔 결과는 ID 가 비어 있다(None). 비어 있는 키로 묶으면 모든 취약점이 마지막 패키지에 붙으므로
+            # 값이 있는 식별자(UID, ID)만 키로 쓴다
+            for k in ((p.get("Identifier") or {}).get("UID"), p.get("ID")):
+                if k:
+                    pkg_by_id[k] = c
         for v in r.get("Vulnerabilities") or []:
-            comp = pkg_by_id.get(v.get("PkgID")) or _component(
+            ref = (v.get("PkgIdentifier") or {}).get("UID") or v.get("PkgID")
+            comp = (pkg_by_id.get(ref) if ref else None) or _component(
                 v.get("PkgName", ""), v.get("InstalledVersion", ""), (v.get("PkgIdentifier") or {}).get("PURL", ""),
                 rtype, src)
             comps.setdefault(comp.id, comp)
