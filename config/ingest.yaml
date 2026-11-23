@@ -1,0 +1,31 @@
+# 입력 정규화 설정. 현장 자산 목록의 열 이름이 달라도 코드를 고치지 않고 여기에 별칭만 추가한다.
+assets:
+  # 내부 필드: 열 이름 후보(대소문자·공백·밑줄 무시하고 비교)
+  columns:
+    asset_id: [asset_id, assetid, 자산id, 자산번호, 자산코드, 시스템코드, 시스템id, id]
+    service_name: [service_name, service, 서비스명, 서비스, 시스템명, 시스템, 애플리케이션, 앱]
+    internet_exposed: [internet_exposed, exposed, exposure, 외부노출, 외부노출여부, 인터넷노출, 노출여부, 노출, 외부접점]
+    criticality: [criticality, business_criticality, 업무중요도, 중요도, 자산중요도, 자산등급, 등급]
+    environment: [environment, env, 환경, 운영환경, 구분]
+    owner: [owner, 담당자, 담당부서, 운영담당, 관리자]
+    match: [match, sbom, sbom파일, 이미지, image, 저장소, repository, repo, artifact, 대상, 스캔대상]
+  true_values: [y, yes, true, "1", o, 예, 외부, 노출, 있음, external, public, internet]
+  false_values: [n, no, false, "0", x, 아니오, 내부, 미노출, 없음, internal, private, 내부망]
+  # 중요도 문자열 → 1(낮음)~5(매우 높음). 숫자는 1~5 로 그대로 쓴다
+  criticality_map:
+    매우높음: 5
+    최상: 5
+    critical: 5
+    상: 4
+    높음: 4
+    high: 4
+    중: 3
+    보통: 3
+    medium: 3
+    하: 2
+    낮음: 2
+    low: 2
+    최하: 1
+    매우낮음: 1
+  # match 열이 여러 값을 담을 때 구분자
+  match_separator: ";"
