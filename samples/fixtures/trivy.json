@@ -1,0 +1,1698 @@
+{
+  "SchemaVersion": 2,
+  "Trivy": {
+    "Version": "0.69.1"
+  },
+  "ReportID": "01a205f3-d5da-754e-a544-5eb3eae93edb",
+  "CreatedAt": "2026-11-23T01:09:55.802353621Z",
+  "ArtifactName": "/src",
+  "ArtifactType": "filesystem",
+  "Results": [
+    {
+      "Target": "pom.xml",
+      "Class": "lang-pkgs",
+      "Type": "pom",
+      "Packages": [
+        {
+          "ID": "com.example:fixture-target:0.0.1::23f3d9ef",
+          "Name": "com.example:fixture-target",
+          "Identifier": {
+            "PURL": "pkg:maven/com.example/fixture-target@0.0.1",
+            "UID": "8aadf783e8557a5d"
+          },
+          "Version": "0.0.1",
+          "Relationship": "root",
+          "DependsOn": [
+            "com.google.guava:guava:33.3.1-jre::47d13d17",
+            "org.apache.commons:commons-text:1.9::29f06141",
+            "org.apache.logging.log4j:log4j-core:2.14.1::f500351e",
+            "org.yaml:snakeyaml:1.29::eeeeb199"
+          ],
+          "AnalyzedBy": "pom"
+        },
+        {
+          "ID": "com.google.guava:guava:33.3.1-jre::47d13d17",
+          "Name": "com.google.guava:guava",
+          "Identifier": {
+            "PURL": "pkg:maven/com.google.guava/guava@33.3.1-jre",
+            "UID": "969d2ddafe06cf23"
+          },
+          "Version": "33.3.1-jre",
+          "Licenses": [
+            "Apache-2.0"
+          ],
+          "Relationship": "direct",
+          "DependsOn": [
+            "com.google.code.findbugs:jsr305:3.0.2::8f3b592d",
+            "com.google.errorprone:error_prone_annotations:2.28.0::b9979ad6",
+            "com.google.guava:failureaccess:1.0.2::afd6f54f",
+            "com.google.guava:listenablefuture:9999.0-empty-to-avoid-conflict-with-guava::265e5780",
+            "com.google.j2objc:j2objc-annotations:3.0.0::1f8817b5",
+            "org.checkerframework:checker-qual:3.43.0::7c4a7c15"
+          ],
+          "Locations": [
+            {
+              "StartLine": 11,
+              "EndLine": 11
+            }
+          ],
+          "AnalyzedBy": "pom"
+        },
+        {
+          "ID": "org.apache.commons:commons-text:1.9::29f06141",
+          "Name": "org.apache.commons:commons-text",
+          "Identifier": {
+            "PURL": "pkg:maven/org.apache.commons/commons-text@1.9",
+            "UID": "57a96565ecdfc28b"
+          },
+          "Version": "1.9",
+          "Licenses": [
+            "Apache-2.0"
+          ],
+          "Relationship": "direct",
+          "DependsOn": [
+            "org.apache.commons:commons-lang3:3.11::1ec40102"
+          ],
+          "Locations": [
+            {
+              "StartLine": 9,
+              "EndLine": 9
+            }
+          ],
+          "AnalyzedBy": "pom"
+        },
+        {
+          "ID": "org.apache.logging.log4j:log4j-core:2.14.1::f500351e",
+          "Name": "org.apache.logging.log4j:log4j-core",
+          "Identifier": {
+            "PURL": "pkg:maven/org.apache.logging.log4j/log4j-core@2.14.1",
+            "UID": "22fd2aa24542daca"
+          },
+          "Version": "2.14.1",
+          "Licenses": [
+            "Apache-2.0"
+          ],
+          "Relationship": "direct",
+          "DependsOn": [
+            "org.apache.logging.log4j:log4j-api:2.14.1::f73b9bcc"
+          ],
+          "Locations": [
+            {
+              "StartLine": 8,
+              "EndLine": 8
+            }
+          ],
+          "AnalyzedBy": "pom"
+        },
+        {
+          "ID": "org.yaml:snakeyaml:1.29::eeeeb199",
+          "Name": "org.yaml:snakeyaml",
+          "Identifier": {
+            "PURL": "pkg:maven/org.yaml/snakeyaml@1.29",
+            "UID": "1917ec99f3902d38"
+          },
+          "Version": "1.29",
+          "Licenses": [
+            "Apache-2.0"
+          ],
+          "Relationship": "direct",
+          "Locations": [
+            {
+              "StartLine": 10,
+              "EndLine": 10
+            }
+          ],
+          "AnalyzedBy": "pom"
+        },
+        {
+          "ID": "com.google.code.findbugs:jsr305:3.0.2::8f3b592d",
+          "Name": "com.google.code.findbugs:jsr305",
+          "Identifier": {
+            "PURL": "pkg:maven/com.google.code.findbugs/jsr305@3.0.2",
+            "UID": "4b41cffbb7eb8bdf"
+          },
+          "Version": "3.0.2",
+          "Licenses": [
+            "Apache-2.0"
+          ],
+          "Indirect": true,
+          "Relationship": "indirect",
+          "AnalyzedBy": "pom"
+        },
+        {
+          "ID": "com.google.errorprone:error_prone_annotations:2.28.0::b9979ad6",
+          "Name": "com.google.errorprone:error_prone_annotations",
+          "Identifier": {
+            "PURL": "pkg:maven/com.google.errorprone/error_prone_annotations@2.28.0",
+            "UID": "7a52771cb0134c4f"
+          },
+          "Version": "2.28.0",
+          "Licenses": [
+            "Apache-2.0"
+          ],
+          "Indirect": true,
+          "Relationship": "indirect",
+          "AnalyzedBy": "pom"
+        },
+        {
+          "ID": "com.google.guava:failureaccess:1.0.2::afd6f54f",
+          "Name": "com.google.guava:failureaccess",
+          "Identifier": {
+            "PURL": "pkg:maven/com.google.guava/failureaccess@1.0.2",
+            "UID": "2a991447f36d6a1f"
+          },
+          "Version": "1.0.2",
+          "Licenses": [
+            "Apache-2.0"
+          ],
+          "Indirect": true,
+          "Relationship": "indirect",
+          "AnalyzedBy": "pom"
+        },
+        {
+          "ID": "com.google.guava:listenablefuture:9999.0-empty-to-avoid-conflict-with-guava::265e5780",
+          "Name": "com.google.guava:listenablefuture",
+          "Identifier": {
+            "PURL": "pkg:maven/com.google.guava/listenablefuture@9999.0-empty-to-avoid-conflict-with-guava",
+            "UID": "5088ab3a55e767ae"
+          },
+          "Version": "9999.0-empty-to-avoid-conflict-with-guava",
+          "Licenses": [
+            "Apache-2.0"
+          ],
+          "Indirect": true,
+          "Relationship": "indirect",
+          "AnalyzedBy": "pom"
+        },
+        {
+          "ID": "com.google.j2objc:j2objc-annotations:3.0.0::1f8817b5",
+          "Name": "com.google.j2objc:j2objc-annotations",
+          "Identifier": {
+            "PURL": "pkg:maven/com.google.j2objc/j2objc-annotations@3.0.0",
+            "UID": "b726e2452eff43d4"
+          },
+          "Version": "3.0.0",
+          "Licenses": [
+            "Apache-2.0"
+          ],
+          "Indirect": true,
+          "Relationship": "indirect",
+          "AnalyzedBy": "pom"
+        },
+        {
+          "ID": "org.apache.commons:commons-lang3:3.11::1ec40102",
+          "Name": "org.apache.commons:commons-lang3",
+          "Identifier": {
+            "PURL": "pkg:maven/org.apache.commons/commons-lang3@3.11",
+            "UID": "f3f38bd0ee280859"
+          },
+          "Version": "3.11",
+          "Licenses": [
+            "Apache-2.0"
+          ],
+          "Indirect": true,
+          "Relationship": "indirect",
+          "AnalyzedBy": "pom"
+        },
+        {
+          "ID": "org.apache.logging.log4j:log4j-api:2.14.1::f73b9bcc",
+          "Name": "org.apache.logging.log4j:log4j-api",
+          "Identifier": {
+            "PURL": "pkg:maven/org.apache.logging.log4j/log4j-api@2.14.1",
+            "UID": "308672159c0919c5"
+          },
+          "Version": "2.14.1",
+          "Licenses": [
+            "Apache-2.0"
+          ],
+          "Indirect": true,
+          "Relationship": "indirect",
+          "AnalyzedBy": "pom"
+        },
+        {
+          "ID": "org.checkerframework:checker-qual:3.43.0::7c4a7c15",
+          "Name": "org.checkerframework:checker-qual",
+          "Identifier": {
+            "PURL": "pkg:maven/org.checkerframework/checker-qual@3.43.0",
+            "UID": "4cc6d712abac49cf"
+          },
+          "Version": "3.43.0",
+          "Licenses": [
+            "MIT"
+          ],
+          "Indirect": true,
+          "Relationship": "indirect",
+          "AnalyzedBy": "pom"
+        }
+      ],
+      "Vulnerabilities": [
+        {
+          "VulnerabilityID": "CVE-2026-102554",
+          "VendorIDs": [
+            "GHSA-xxph-c9ww-hj94"
+          ],
+          "PkgID": "com.google.guava:guava:33.3.1-jre::47d13d17",
+          "PkgName": "com.google.guava:guava",
+          "PkgIdentifier": {
+            "PURL": "pkg:maven/com.google.guava/guava@33.3.1-jre",
+            "UID": "969d2ddafe06cf23"
+          },
+          "InstalledVersion": "33.3.1-jre",
+          "FixedVersion": "33.7.2",
+          "Status": "fixed",
+          "SeveritySource": "ghsa",
+          "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2026-102554",
+          "DataSource": {
+            "ID": "ghsa",
+            "Name": "GitHub Security Advisory Maven",
+            "URL": "https://github.com/advisories?query=type%3Areviewed+ecosystem%3Amaven"
+          },
+          "Fingerprint": "sha256:42e98bd3b24cbc8b2469d68d35cd71cb020c7600d7530665fb106d24fb9d6375",
+          "Title": "com.google.guava/guava: Google Guava: Denial of Service via unthrottled memory allocation during deserialization",
+          "Description": "Allocation of resources without limits or throttling (CWE-770) during Java object deserialization in Google Guava versions 4.0 through 33.7.1 allows an attacker to cause a Denial of Service via OutOfMemoryError. When deserializing CompactHashMap, CompactHashSet, or MapMakerInternalMap instances, Guava eagerly allocates an array based on a caller-specified size parameter without throttling, permitting memory exhaustion from crafted serialization streams.",
+          "Severity": "HIGH",
+          "CweIDs": [
+            "CWE-502",
+            "CWE-770"
+          ],
+          "VendorSeverity": {
+            "alma": 3,
+            "amazon": 2,
+            "azure": 2,
+            "ghsa": 3,
+            "redhat": 3,
+            "rocky": 3,
+            "ubuntu": 2
+          },
+          "CVSS": {
+            "ghsa": {
+              "V3Vector": "CVSS:3.1/AV:N/AC:H/PR:N/UI:N/S:U/C:N/I:N/A:H",
+              "V40Vector": "CVSS:4.0/AV:N/AC:L/AT:P/PR:N/UI:N/VC:N/VI:N/VA:H/SC:N/SI:N/SA:N",
+              "V3Score": 5.9,
+              "V40Score": 8.2
+            },
+            "redhat": {
+              "V3Vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:H",
+              "V3Score": 7.5
+            }
+          },
+          "References": [
+            "github.com/cveproject/cvelistv5/tree/main/cves/2026/102xxx/cve-2026-102554.json",
+            "github.com/google/guava",
+            "github.com/google/guava/commit/a0d0c36432c4cc7aa4b5063bab9f20d3d18fe9fc",
+            "github.com/google/guava/commit/b931fe9d6d5cf00bc55714ad3308d086f71850fe",
+            "github.com/google/guava/releases/tag/v33.7.2",
+            "github.com/google/guava/security/advisories/ghsa-xxph-c9ww-hj94",
+            "https://access.redhat.com/errata/RHSA-2026:98498",
+            "https://access.redhat.com/errata/RHSA-2026:98602",
+            "https://access.redhat.com/security/cve/CVE-2026-102554",
+            "https://advisory.echohq.com/cve/CVE-2026-102554",
+            "https://bugs.debian.org/cgi-bin/bugreport.cgi?bug=1150495",
+            "https://bugzilla.redhat.com/2548685",
+            "https://bugzilla.redhat.com/show_bug.cgi?id=2548685",
+            "https://creativecommons.org/licenses/by/4.0/",
+            "https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2026-102554",
+            "https://errata.almalinux.org/10/ALSA-2026-98602.html",
+            "https://errata.rockylinux.org/RLSA-2026:98498",
+            "https://github.com/advisories/GHSA-xxph-c9ww-hj94",
+            "https://github.com/google/guava",
+            "https://github.com/google/guava/commit/b931fe9d6d5cf00bc55714ad3308d086f71850fe",
+            "https://github.com/google/guava/releases/tag/v33.7.2",
+            "https://github.com/google/guava/security/advisories/GHSA-xxph-c9ww-hj94",
+            "https://nvd.nist.gov/vuln/detail/CVE-2026-102554",
+            "https://www.cve.org/CVERecord?id=CVE-2026-102554",
+            "nvd.nist.gov/vuln/detail/cve-2026-102554",
+            "security-tracker.debian.org/tracker/cve-2026-102554"
+          ],
+          "PublishedDate": "2026-10-09T16:17:20.41Z",
+          "LastModifiedDate": "2026-10-09T18:17:01.38Z"
+        },
+        {
+          "VulnerabilityID": "CVE-2025-48924",
+          "VendorIDs": [
+            "GHSA-j288-q9x7-2f5v"
+          ],
+          "PkgID": "org.apache.commons:commons-lang3:3.11::1ec40102",
+          "PkgName": "org.apache.commons:commons-lang3",
+          "PkgIdentifier": {
+            "PURL": "pkg:maven/org.apache.commons/commons-lang3@3.11",
+            "UID": "f3f38bd0ee280859"
+          },
+          "InstalledVersion": "3.11",
+          "FixedVersion": "3.18.0",
+          "Status": "fixed",
+          "SeveritySource": "ghsa",
+          "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2025-48924",
+          "DataSource": {
+            "ID": "ghsa",
+            "Name": "GitHub Security Advisory Maven",
+            "URL": "https://github.com/advisories?query=type%3Areviewed+ecosystem%3Amaven"
+          },
+          "Fingerprint": "sha256:ad8599cc3052a4a052f478b9da48eb0440fba91164fb51eb235b33efe291e850",
+          "Title": "commons-lang/commons-lang: org.apache.commons/commons-lang3: Uncontrolled Recursion vulnerability in Apache Commons Lang",
+          "Description": "Uncontrolled Recursion vulnerability in Apache Commons Lang.\n\nThis issue affects Apache Commons Lang: Starting with commons-lang:commons-lang 2.0 to 2.6, and, from org.apache.commons:commons-lang3 3.0 before 3.18.0.\n\nThe methods ClassUtils.getClass(...) can throw StackOverflowError on very long inputs. Because an Error is usually not handled by applications and libraries, a \nStackOverflowError could cause an application to stop.\n\nUsers are recommended to upgrade to version 3.18.0, which fixes the issue.",
+          "Severity": "MEDIUM",
+          "CweIDs": [
+            "CWE-674"
+          ],
+          "VendorSeverity": {
+            "amazon": 1,
+            "azure": 2,
+            "cbl-mariner": 2,
+            "ghsa": 2,
+            "redhat": 1,
+            "ubuntu": 2
+          },
+          "CVSS": {
+            "ghsa": {
+              "V3Vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:L/I:L/A:N",
+              "V3Score": 6.5
+            },
+            "redhat": {
+              "V3Vector": "CVSS:3.1/AV:N/AC:H/PR:N/UI:N/S:U/C:N/I:N/A:L",
+              "V3Score": 3.7
+            }
+          },
+          "References": [
+            "http://www.openwall.com/lists/oss-security/2025/07/11/1",
+            "https://access.redhat.com/security/cve/CVE-2025-48924",
+            "https://advisory.echohq.com/cve/CVE-2025-48924",
+            "https://github.com/apache/commons-lang",
+            "https://github.com/apache/commons-lang/commit/b424803abdb2bec818e4fbcb251ce031c22aca53",
+            "https://lists.apache.org/thread/bgv0lpswokgol11tloxnjfzdl7yrc1g1",
+            "https://lists.debian.org/debian-lts-announce/2025/08/msg00000.html",
+            "https://lists.debian.org/debian-lts-announce/2025/08/msg00026.html",
+            "https://lists.debian.org/debian-lts-announce/2025/09/msg00032.html",
+            "https://lists.debian.org/debian-lts-announce/2025/09/msg00036.html",
+            "https://nvd.nist.gov/vuln/detail/CVE-2025-48924",
+            "https://ubuntu.com/security/notices/USN-8364-1",
+            "https://www.cve.org/CVERecord?id=CVE-2025-48924",
+            "https://www.openwall.com/lists/oss-security/2025/07/11/1"
+          ],
+          "PublishedDate": "2025-07-11T15:15:24.347Z",
+          "LastModifiedDate": "2026-06-17T09:30:29.473Z"
+        },
+        {
+          "VulnerabilityID": "CVE-2022-42889",
+          "VendorIDs": [
+            "GHSA-599f-7c49-w659"
+          ],
+          "PkgID": "org.apache.commons:commons-text:1.9::29f06141",
+          "PkgName": "org.apache.commons:commons-text",
+          "PkgIdentifier": {
+            "PURL": "pkg:maven/org.apache.commons/commons-text@1.9",
+            "UID": "57a96565ecdfc28b"
+          },
+          "InstalledVersion": "1.9",
+          "FixedVersion": "1.10.0",
+          "Status": "fixed",
+          "SeveritySource": "ghsa",
+          "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2022-42889",
+          "DataSource": {
+            "ID": "ghsa",
+            "Name": "GitHub Security Advisory Maven",
+            "URL": "https://github.com/advisories?query=type%3Areviewed+ecosystem%3Amaven"
+          },
+          "Fingerprint": "sha256:5662f083333cbe7b0a9c35b7ae18dd6d5d2651df6fca4c7ba8179ecc1c40f8cd",
+          "Title": "apache-commons-text: variable interpolation RCE",
+          "Description": "Apache Commons Text performs variable interpolation, allowing properties to be dynamically evaluated and expanded. The standard format for interpolation is \"${prefix:name}\", where \"prefix\" is used to locate an instance of org.apache.commons.text.lookup.StringLookup that performs the interpolation. Starting with version 1.5 and continuing through 1.9, the set of default Lookup instances included interpolators that could result in arbitrary code execution or contact with remote servers. These lookups are: - \"script\" - execute expressions using the JVM script execution engine (javax.script) - \"dns\" - resolve dns records - \"url\" - load values from urls, including from remote servers Applications using the interpolation defaults in the affected versions may be vulnerable to remote code execution or unintentional contact with remote servers if untrusted configuration values are used. Users are recommended to upgrade to Apache Commons Text 1.10.0, which disables the problematic interpolators by default.",
+          "Severity": "CRITICAL",
+          "CweIDs": [
+            "CWE-94"
+          ],
+          "VendorSeverity": {
+            "ghsa": 4,
+            "nvd": 4,
+            "redhat": 4,
+            "ubuntu": 2
+          },
+          "CVSS": {
+            "ghsa": {
+              "V3Vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H",
+              "V3Score": 9.8
+            },
+            "nvd": {
+              "V3Vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H",
+              "V3Score": 9.8
+            },
+            "redhat": {
+              "V3Vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H",
+              "V3Score": 9.8
+            }
+          },
+          "References": [
+            "http://packetstormsecurity.com/files/171003/OX-App-Suite-Cross-Site-Scripting-Server-Side-Request-Forgery.html",
+            "http://packetstormsecurity.com/files/176650/Apache-Commons-Text-1.9-Remote-Code-Execution.html",
+            "http://seclists.org/fulldisclosure/2023/Feb/3",
+            "http://www.openwall.com/lists/oss-security/2022/10/13/4",
+            "http://www.openwall.com/lists/oss-security/2022/10/18/1",
+            "https://access.redhat.com/security/cve/CVE-2022-42889",
+            "https://arxiv.org/pdf/2306.05534",
+            "https://blogs.apache.org/security/entry/cve-2022-42889",
+            "https://github.com/apache/commons-text",
+            "https://lists.apache.org/thread/n2bd4vdsgkqh2tm14l1wyc3jyol7s1om",
+            "https://nvd.nist.gov/vuln/detail/CVE-2022-42889",
+            "https://psirt.global.sonicwall.com/vuln-detail/SNWLID-2022-0022",
+            "https://seclists.org/oss-sec/2022/q4/22",
+            "https://security.gentoo.org/glsa/202301-05",
+            "https://security.netapp.com/advisory/ntap-20221020-0004",
+            "https://security.netapp.com/advisory/ntap-20221020-0004/",
+            "https://securitylab.github.com/advisories/GHSL-2022-018_Apache_Commons_Text",
+            "https://www.cve.org/CVERecord?id=CVE-2022-42889"
+          ],
+          "PublishedDate": "2022-10-13T13:15:10.113Z",
+          "LastModifiedDate": "2026-06-17T05:05:31.85Z"
+        },
+        {
+          "VulnerabilityID": "CVE-2026-49844",
+          "VendorIDs": [
+            "GHSA-qv9r-c865-cp47"
+          ],
+          "PkgID": "org.apache.logging.log4j:log4j-api:2.14.1::f73b9bcc",
+          "PkgName": "org.apache.logging.log4j:log4j-api",
+          "PkgIdentifier": {
+            "PURL": "pkg:maven/org.apache.logging.log4j/log4j-api@2.14.1",
+            "UID": "308672159c0919c5"
+          },
+          "InstalledVersion": "2.14.1",
+          "FixedVersion": "2.25.5, 2.26.1",
+          "Status": "fixed",
+          "SeveritySource": "ghsa",
+          "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2026-49844",
+          "DataSource": {
+            "ID": "ghsa",
+            "Name": "GitHub Security Advisory Maven",
+            "URL": "https://github.com/advisories?query=type%3Areviewed+ecosystem%3Amaven"
+          },
+          "Fingerprint": "sha256:f943e2e32200a99b069466002c45a7c6ee39c331db47a3e1dbf0da8e0b019f86",
+          "Title": "org.apache.logging.log4j/log4j-api: Apache Log4j API: Malformed JSON output due to improper encoding of floating-point values",
+          "Description": "Improper encoding of non-finite floating-point values during MapMessage JSON serialization in Apache Log4j API produces output that is not valid JSON. This issue affects Apache Log4j API versions 2.13.1 through 2.25.4 and version 2.26.0.\n\nThe fix for CVE-2026-34481 did not cover all code paths: when a MapMessage contains a non-finite IEEE 754 value (NaN, Infinity, or -Infinity), MapMessage.asJson() emits the corresponding bare token. RFC 8259 does not permit these tokens, so a conformant parser rejects the resulting document.\n\nThe defect is reachable only when both of the following conditions hold:\n\n  *  The application uses the  message resolver https://logging.apache.org/log4j/2.x/manual/json-template-layout.html#event-template-resolver-message  of JsonTemplateLayout or any other layout that relies on MapMessage.asJson() or MapMessage.getFormattedMessage(new String[]{\"JSON\"}).\n  *  The application logs a MapMessage that contains an attacker-controlled floating-point value.\n\n\nAn attacker who can supply a non-finite value can cause the affected layout to emit malformed JSON, which may corrupt the enclosing log record or disrupt downstream log ingestion and parsing.\n\nUsers are advised to upgrade to Apache Log4j API 2.25.5 or 2.26.1, both of which emit RFC 8259-compliant JSON for non-finite values.",
+          "Severity": "MEDIUM",
+          "CweIDs": [
+            "CWE-116"
+          ],
+          "VendorSeverity": {
+            "amazon": 2,
+            "ghsa": 2,
+            "nvd": 2,
+            "redhat": 2,
+            "ubuntu": 2
+          },
+          "CVSS": {
+            "ghsa": {
+              "V40Vector": "CVSS:4.0/AV:N/AC:L/AT:P/PR:N/UI:N/VC:N/VI:N/VA:N/SC:N/SI:L/SA:N",
+              "V40Score": 6.3
+            },
+            "nvd": {
+              "V3Vector": "CVSS:3.1/AV:N/AC:H/PR:N/UI:N/S:U/C:N/I:H/A:N",
+              "V3Score": 5.9
+            },
+            "redhat": {
+              "V3Vector": "CVSS:3.1/AV:N/AC:H/PR:N/UI:N/S:U/C:N/I:H/A:N",
+              "V3Score": 5.9
+            }
+          },
+          "References": [
+            "https://access.redhat.com/security/cve/CVE-2026-49844",
+            "https://advisory.echohq.com/cve/CVE-2026-49844",
+            "https://github.com/apache/logging-log4j2",
+            "https://github.com/apache/logging-log4j2/commit/19edb23e162d6c728a8c2221a240037d389ed300",
+            "https://github.com/apache/logging-log4j2/commit/feadf8eb0b4acb6ddfa4c0ab2bbc6d88b8e12d82",
+            "https://github.com/apache/logging-log4j2/pull/4163",
+            "https://github.com/apache/logging-log4j2/releases/tag/rel/2.25.5",
+            "https://github.com/apache/logging-log4j2/releases/tag/rel/2.26.1",
+            "https://logging.apache.org/cyclonedx/vdr.xml",
+            "https://logging.apache.org/log4j/2.x/manual/json-template-layout.html#event-template-resolver-message",
+            "https://logging.apache.org/security.html#CVE-2026-49844",
+            "https://nvd.nist.gov/vuln/detail/CVE-2026-49844",
+            "https://www.cve.org/CVERecord?id=CVE-2026-49844"
+          ],
+          "PublishedDate": "2026-07-10T22:16:42.54Z",
+          "LastModifiedDate": "2026-10-25T15:10:00.147Z"
+        },
+        {
+          "VulnerabilityID": "CVE-2021-44228",
+          "VendorIDs": [
+            "GHSA-jfh8-c2jp-5v3q"
+          ],
+          "PkgID": "org.apache.logging.log4j:log4j-core:2.14.1::f500351e",
+          "PkgName": "org.apache.logging.log4j:log4j-core",
+          "PkgIdentifier": {
+            "PURL": "pkg:maven/org.apache.logging.log4j/log4j-core@2.14.1",
+            "UID": "22fd2aa24542daca"
+          },
+          "InstalledVersion": "2.14.1",
+          "FixedVersion": "2.15.0, 2.3.1, 2.12.2",
+          "Status": "fixed",
+          "SeveritySource": "ghsa",
+          "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2021-44228",
+          "DataSource": {
+            "ID": "ghsa",
+            "Name": "GitHub Security Advisory Maven",
+            "URL": "https://github.com/advisories?query=type%3Areviewed+ecosystem%3Amaven"
+          },
+          "Fingerprint": "sha256:c1698135080cd234663c63ebec615d5d20cae6df4c407ef6ea36b3ca0671d186",
+          "Title": "log4j-core: Remote code execution in Log4j 2.x when logs contain an attacker-controlled string value",
+          "Description": "Apache Log4j2 2.0-beta9 through 2.15.0 (excluding security releases 2.12.2, 2.12.3, and 2.3.1) JNDI features used in configuration, log messages, and parameters do not protect against attacker controlled LDAP and other JNDI related endpoints. An attacker who can control log messages or log message parameters can execute arbitrary code loaded from LDAP servers when message lookup substitution is enabled. From log4j 2.15.0, this behavior has been disabled by default. From version 2.16.0 (along with 2.12.2, 2.12.3, and 2.3.1), this functionality has been completely removed. Note that this vulnerability is specific to log4j-core and does not affect log4net, log4cxx, or other Apache Logging Services projects.",
+          "Severity": "CRITICAL",
+          "CweIDs": [
+            "CWE-20",
+            "CWE-400",
+            "CWE-502",
+            "CWE-917"
+          ],
+          "VendorSeverity": {
+            "amazon": 4,
+            "ghsa": 4,
+            "nvd": 4,
+            "redhat": 4,
+            "ubuntu": 3
+          },
+          "CVSS": {
+            "ghsa": {
+              "V3Vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:C/C:H/I:H/A:H/E:H",
+              "V3Score": 10
+            },
+            "nvd": {
+              "V2Vector": "AV:N/AC:M/Au:N/C:C/I:C/A:C",
+              "V3Vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:C/C:H/I:H/A:H",
+              "V2Score": 9.3,
+              "V3Score": 10
+            },
+            "redhat": {
+              "V3Vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H",
+              "V3Score": 9.8
+            }
+          },
+          "References": [
+            "http://packetstormsecurity.com/files/165225/Apache-Log4j2-2.14.1-Remote-Code-Execution.html",
+            "http://packetstormsecurity.com/files/165260/VMware-Security-Advisory-2021-0028.html",
+            "http://packetstormsecurity.com/files/165261/Apache-Log4j2-2.14.1-Information-Disclosure.html",
+            "http://packetstormsecurity.com/files/165270/Apache-Log4j2-2.14.1-Remote-Code-Execution.html",
+            "http://packetstormsecurity.com/files/165281/Log4j2-Log4Shell-Regexes.html",
+            "http://packetstormsecurity.com/files/165282/Log4j-Payload-Generator.html",
+            "http://packetstormsecurity.com/files/165306/L4sh-Log4j-Remote-Code-Execution.html",
+            "http://packetstormsecurity.com/files/165307/Log4j-Remote-Code-Execution-Word-Bypassing.html",
+            "http://packetstormsecurity.com/files/165311/log4j-scan-Extensive-Scanner.html",
+            "http://packetstormsecurity.com/files/165371/VMware-Security-Advisory-2021-0028.4.html",
+            "http://packetstormsecurity.com/files/165532/Log4Shell-HTTP-Header-Injection.html",
+            "http://packetstormsecurity.com/files/165642/VMware-vCenter-Server-Unauthenticated-Log4Shell-JNDI-Injection-Remote-Code-Execution.html",
+            "http://packetstormsecurity.com/files/165673/UniFi-Network-Application-Unauthenticated-Log4Shell-Remote-Code-Execution.html",
+            "http://packetstormsecurity.com/files/167794/Open-Xchange-App-Suite-7.10.x-Cross-Site-Scripting-Command-Injection.html",
+            "http://packetstormsecurity.com/files/167917/MobileIron-Log4Shell-Remote-Command-Execution.html",
+            "http://packetstormsecurity.com/files/171626/AD-Manager-Plus-7122-Remote-Code-Execution.html",
+            "http://seclists.org/fulldisclosure/2022/Dec/2",
+            "http://seclists.org/fulldisclosure/2022/Jul/11",
+            "http://seclists.org/fulldisclosure/2022/Mar/23",
+            "http://www.openwall.com/lists/oss-security/2021/12/10/1",
+            "http://www.openwall.com/lists/oss-security/2021/12/10/2",
+            "http://www.openwall.com/lists/oss-security/2021/12/10/3",
+            "http://www.openwall.com/lists/oss-security/2021/12/13/1",
+            "http://www.openwall.com/lists/oss-security/2021/12/13/2",
+            "http://www.openwall.com/lists/oss-security/2021/12/14/4",
+            "http://www.openwall.com/lists/oss-security/2021/12/15/3",
+            "https://access.redhat.com/security/cve/CVE-2021-44228",
+            "https://cert-portal.siemens.com/productcert/pdf/ssa-397453.pdf",
+            "https://cert-portal.siemens.com/productcert/pdf/ssa-479842.pdf",
+            "https://cert-portal.siemens.com/productcert/pdf/ssa-661247.pdf",
+            "https://cert-portal.siemens.com/productcert/pdf/ssa-714170.pdf",
+            "https://github.com/advisories/GHSA-7rjr-3q55-vv33",
+            "https://github.com/advisories/GHSA-jfh8-c2jp-5v3q",
+            "https://github.com/apache/logging-log4j2",
+            "https://github.com/apache/logging-log4j2/commit/c77b3cb39312b83b053d23a2158b99ac7de44dd3",
+            "https://github.com/apache/logging-log4j2/pull/608",
+            "https://github.com/cisagov/log4j-affected-db",
+            "https://github.com/cisagov/log4j-affected-db/blob/develop/SOFTWARE-LIST.md",
+            "https://github.com/github/advisory-database/pull/5501",
+            "https://github.com/nu11secur1ty/CVE-mitre/tree/main/CVE-2021-44228",
+            "https://github.com/tangxiaofeng7/apache-log4j-poc",
+            "https://issues.apache.org/jira/browse/LOG4J2-3198",
+            "https://issues.apache.org/jira/browse/LOG4J2-3201",
+            "https://issues.apache.org/jira/browse/LOG4J2-3214",
+            "https://issues.apache.org/jira/browse/LOG4J2-3221",
+            "https://lists.debian.org/debian-lts-announce/2021/12/msg00007.html",
+            "https://lists.fedoraproject.org/archives/list/package-announce@lists.fedoraproject.org/message/M5CSVUNV4HWZZXGOKNSK6L7RPM7BOKIB",
+            "https://lists.fedoraproject.org/archives/list/package-announce@lists.fedoraproject.org/message/M5CSVUNV4HWZZXGOKNSK6L7RPM7BOKIB/",
+            "https://lists.fedoraproject.org/archives/list/package-announce@lists.fedoraproject.org/message/VU57UJDCFIASIO35GC55JMKSRXJMCDFM",
+            "https://lists.fedoraproject.org/archives/list/package-announce@lists.fedoraproject.org/message/VU57UJDCFIASIO35GC55JMKSRXJMCDFM/",
+            "https://logging.apache.org/log4j/2.x/changes-report.html#a2.15.0",
+            "https://logging.apache.org/log4j/2.x/manual/lookups.html#JndiLookup",
+            "https://logging.apache.org/log4j/2.x/manual/migration.html",
+            "https://logging.apache.org/log4j/2.x/security.html",
+            "https://msrc-blog.microsoft.com/2021/12/11/microsofts-response-to-cve-2021-44228-apache-log4j2",
+            "https://msrc-blog.microsoft.com/2021/12/11/microsofts-response-to-cve-2021-44228-apache-log4j2/",
+            "https://nvd.nist.gov/vuln/detail/CVE-2021-44228",
+            "https://packetstormsecurity.com/files/165673/UniFi-Network-Application-Unauthenticated-Log4Shell-Remote-Code-Execution.html",
+            "https://packetstormsecurity.com/files/167794/Open-Xchange-App-Suite-7.10.x-Cross-Site-Scripting-Command-Injection.html",
+            "https://packetstormsecurity.com/files/167917/MobileIron-Log4Shell-Remote-Command-Execution.html",
+            "https://packetstormsecurity.com/files/171626/AD-Manager-Plus-7122-Remote-Code-Execution.html",
+            "https://psirt.global.sonicwall.com/vuln-detail/SNWLID-2021-0032",
+            "https://sec.cloudapps.cisco.com/security/center/content/CiscoSecurityAdvisory/cisco-sa-apache-log4j-qRuKNEbd",
+            "https://seclists.org/fulldisclosure/2022/Dec/2",
+            "https://seclists.org/fulldisclosure/2022/Jul/11",
+            "https://seclists.org/fulldisclosure/2022/Mar/23",
+            "https://security.netapp.com/advisory/ntap-20211210-0007",
+            "https://security.netapp.com/advisory/ntap-20211210-0007/",
+            "https://support.apple.com/kb/HT213189",
+            "https://tools.cisco.com/security/center/content/CiscoSecurityAdvisory/cisco-sa-apache-log4j-qRuKNEbd",
+            "https://twitter.com/kurtseifried/status/1469345530182455296",
+            "https://ubuntu.com/security/notices/USN-5192-1",
+            "https://ubuntu.com/security/notices/USN-5192-2",
+            "https://ubuntu.com/security/notices/USN-5197-1",
+            "https://wiki.ubuntu.com/SecurityTeam/KnowledgeBase/Log4Shell",
+            "https://www.bentley.com/en/common-vulnerability-exposure/be-2022-0001",
+            "https://www.cisa.gov/known-exploited-vulnerabilities-catalog",
+            "https://www.cisa.gov/known-exploited-vulnerabilities-catalog?field_cve=CVE-2021-44228",
+            "https://www.cve.org/CVERecord?id=CVE-2021-44228",
+            "https://www.debian.org/security/2021/dsa-5020",
+            "https://www.intel.com/content/www/us/en/security-center/advisory/intel-sa-00646.html",
+            "https://www.kb.cert.org/vuls/id/930724",
+            "https://www.lunasec.io/docs/blog/log4j-zero-day/",
+            "https://www.nu11secur1ty.com/2021/12/cve-2021-44228.html",
+            "https://www.oracle.com/security-alerts/alert-cve-2021-44228.html",
+            "https://www.oracle.com/security-alerts/cpuapr2022.html",
+            "https://www.oracle.com/security-alerts/cpujan2022.html"
+          ],
+          "PublishedDate": "2021-12-10T10:15:09.143Z",
+          "LastModifiedDate": "2026-08-11T19:33:44.513Z"
+        },
+        {
+          "VulnerabilityID": "CVE-2021-45046",
+          "VendorIDs": [
+            "GHSA-7rjr-3q55-vv33"
+          ],
+          "PkgID": "org.apache.logging.log4j:log4j-core:2.14.1::f500351e",
+          "PkgName": "org.apache.logging.log4j:log4j-core",
+          "PkgIdentifier": {
+            "PURL": "pkg:maven/org.apache.logging.log4j/log4j-core@2.14.1",
+            "UID": "22fd2aa24542daca"
+          },
+          "InstalledVersion": "2.14.1",
+          "FixedVersion": "2.16.0, 2.12.2, 2.3.1",
+          "Status": "fixed",
+          "SeveritySource": "ghsa",
+          "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2021-45046",
+          "DataSource": {
+            "ID": "ghsa",
+            "Name": "GitHub Security Advisory Maven",
+            "URL": "https://github.com/advisories?query=type%3Areviewed+ecosystem%3Amaven"
+          },
+          "Fingerprint": "sha256:cc45989debc2f1e4a0746faa4b17eb22b7a69395c2417daab9a0ca9f861905f1",
+          "Title": "log4j-core: DoS in log4j 2.x with thread context message pattern and context lookup pattern (incomplete fix for CVE-2021-44228)",
+          "Description": "It was found that the fix to address CVE-2021-44228 in Apache Log4j 2.15.0 was incomplete in certain non-default configurations. This could allows attackers with control over Thread Context Map (MDC) input data when the logging configuration uses a non-default Pattern Layout with either a Context Lookup (for example, $${ctx:loginId}) or a Thread Context Map pattern (%X, %mdc, or %MDC) to craft malicious input data using a JNDI Lookup pattern resulting in an information leak and remote code execution in some environments and local code execution in all environments. Log4j 2.16.0 (Java 8) and 2.12.2 (Java 7) fix this issue by removing support for message lookup patterns and disabling JNDI functionality by default.",
+          "Severity": "CRITICAL",
+          "CweIDs": [
+            "CWE-917"
+          ],
+          "VendorSeverity": {
+            "amazon": 4,
+            "ghsa": 4,
+            "nvd": 4,
+            "redhat": 2,
+            "ubuntu": 3
+          },
+          "CVSS": {
+            "ghsa": {
+              "V3Vector": "CVSS:3.1/AV:N/AC:H/PR:N/UI:N/S:C/C:H/I:H/A:H",
+              "V3Score": 9.1
+            },
+            "nvd": {
+              "V2Vector": "AV:N/AC:H/Au:N/C:P/I:P/A:P",
+              "V3Vector": "CVSS:3.1/AV:N/AC:H/PR:N/UI:N/S:C/C:H/I:H/A:H",
+              "V2Score": 5.1,
+              "V3Score": 9
+            },
+            "redhat": {
+              "V3Vector": "CVSS:3.1/AV:N/AC:H/PR:N/UI:N/S:U/C:H/I:H/A:H",
+              "V3Score": 8.1
+            }
+          },
+          "References": [
+            "http://www.openwall.com/lists/oss-security/2021/12/14/4",
+            "http://www.openwall.com/lists/oss-security/2021/12/15/3",
+            "http://www.openwall.com/lists/oss-security/2021/12/18/1",
+            "https://access.redhat.com/security/cve/CVE-2021-44228",
+            "https://access.redhat.com/security/cve/CVE-2021-45046",
+            "https://cert-portal.siemens.com/productcert/pdf/ssa-397453.pdf",
+            "https://cert-portal.siemens.com/productcert/pdf/ssa-479842.pdf",
+            "https://cert-portal.siemens.com/productcert/pdf/ssa-661247.pdf",
+            "https://cert-portal.siemens.com/productcert/pdf/ssa-714170.pdf",
+            "https://github.com/apache/logging-log4j2/compare/rel/2.3...rel/2.3.1",
+            "https://issues.apache.org/jira/browse/LOG4J2-3221",
+            "https://lists.apache.org/thread/83y7dx5xvn3h5290q1twn16tltolv88f",
+            "https://lists.fedoraproject.org/archives/list/package-announce@lists.fedoraproject.org/message/EOKPQGV24RRBBI4TBZUDQMM4MEH7MXCY",
+            "https://lists.fedoraproject.org/archives/list/package-announce@lists.fedoraproject.org/message/EOKPQGV24RRBBI4TBZUDQMM4MEH7MXCY/",
+            "https://lists.fedoraproject.org/archives/list/package-announce@lists.fedoraproject.org/message/SIG7FZULMNK2XF6FZRU4VWYDQXNMUGAJ",
+            "https://lists.fedoraproject.org/archives/list/package-announce@lists.fedoraproject.org/message/SIG7FZULMNK2XF6FZRU4VWYDQXNMUGAJ/",
+            "https://logging.apache.org/log4j/2.x/security.html",
+            "https://logging.apache.org/security.html#CVE-2021-45046",
+            "https://nvd.nist.gov/vuln/detail/CVE-2021-45046",
+            "https://psirt.global.sonicwall.com/vuln-detail/SNWLID-2021-0032",
+            "https://sec.cloudapps.cisco.com/security/center/content/CiscoSecurityAdvisory/cisco-sa-apache-log4j-qRuKNEbd",
+            "https://security.gentoo.org/glsa/202310-16",
+            "https://tools.cisco.com/security/center/content/CiscoSecurityAdvisory/cisco-sa-apache-log4j-qRuKNEbd",
+            "https://ubuntu.com/security/notices/USN-5197-1",
+            "https://wiki.ubuntu.com/SecurityTeam/KnowledgeBase/Log4Shell",
+            "https://www.cisa.gov/known-exploited-vulnerabilities-catalog",
+            "https://www.cisa.gov/known-exploited-vulnerabilities-catalog?field_cve=CVE-2021-45046",
+            "https://www.cve.org/CVERecord?id=CVE-2021-44228",
+            "https://www.cve.org/CVERecord?id=CVE-2021-45046",
+            "https://www.debian.org/security/2021/dsa-5022",
+            "https://www.intel.com/content/www/us/en/security-center/advisory/intel-sa-00646.html",
+            "https://www.kb.cert.org/vuls/id/930724",
+            "https://www.openwall.com/lists/oss-security/2021/12/14/4",
+            "https://www.openwall.com/lists/oss-security/2021/12/15/3",
+            "https://www.openwall.com/lists/oss-security/2021/12/18/1",
+            "https://www.oracle.com/security-alerts/alert-cve-2021-44228.html",
+            "https://www.oracle.com/security-alerts/cpuapr2022.html",
+            "https://www.oracle.com/security-alerts/cpujan2022.html",
+            "https://www.oracle.com/security-alerts/cpujul2022.html"
+          ],
+          "PublishedDate": "2021-12-14T19:15:07.733Z",
+          "LastModifiedDate": "2026-06-17T04:13:05.57Z"
+        },
+        {
+          "VulnerabilityID": "CVE-2021-45105",
+          "VendorIDs": [
+            "GHSA-p6xc-xr62-6r2g"
+          ],
+          "PkgID": "org.apache.logging.log4j:log4j-core:2.14.1::f500351e",
+          "PkgName": "org.apache.logging.log4j:log4j-core",
+          "PkgIdentifier": {
+            "PURL": "pkg:maven/org.apache.logging.log4j/log4j-core@2.14.1",
+            "UID": "22fd2aa24542daca"
+          },
+          "InstalledVersion": "2.14.1",
+          "FixedVersion": "2.12.3, 2.17.0, 2.3.1",
+          "Status": "fixed",
+          "SeveritySource": "ghsa",
+          "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2021-45105",
+          "DataSource": {
+            "ID": "ghsa",
+            "Name": "GitHub Security Advisory Maven",
+            "URL": "https://github.com/advisories?query=type%3Areviewed+ecosystem%3Amaven"
+          },
+          "Fingerprint": "sha256:dfb1186ac68c76dd519b04cbb3444242fd4085526b9f8a9bcde0c3bef6980073",
+          "Title": "log4j-core: DoS in log4j 2.x with Thread Context Map (MDC) input data contains a recursive lookup and context lookup pattern",
+          "Description": "Apache Log4j2 versions 2.0-alpha1 through 2.16.0 (excluding 2.12.3 and 2.3.1) did not protect from uncontrolled recursion from self-referential lookups. This allows an attacker with control over Thread Context Map data to cause a denial of service when a crafted string is interpreted. This issue was fixed in Log4j 2.17.0, 2.12.3, and 2.3.1.",
+          "Severity": "HIGH",
+          "CweIDs": [
+            "CWE-20",
+            "CWE-674"
+          ],
+          "VendorSeverity": {
+            "amazon": 4,
+            "ghsa": 3,
+            "nvd": 2,
+            "redhat": 2,
+            "ubuntu": 2
+          },
+          "CVSS": {
+            "ghsa": {
+              "V3Vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:C/C:N/I:N/A:H",
+              "V3Score": 8.6
+            },
+            "nvd": {
+              "V2Vector": "AV:N/AC:M/Au:N/C:N/I:N/A:P",
+              "V3Vector": "CVSS:3.1/AV:N/AC:H/PR:N/UI:N/S:U/C:N/I:N/A:H",
+              "V2Score": 4.3,
+              "V3Score": 5.9
+            },
+            "redhat": {
+              "V3Vector": "CVSS:3.1/AV:N/AC:H/PR:N/UI:N/S:U/C:N/I:N/A:H",
+              "V3Score": 5.9
+            }
+          },
+          "References": [
+            "http://www.openwall.com/lists/oss-security/2021/12/19/1",
+            "https://access.redhat.com/security/cve/CVE-2021-45105",
+            "https://cert-portal.siemens.com/productcert/pdf/ssa-479842.pdf",
+            "https://cert-portal.siemens.com/productcert/pdf/ssa-501673.pdf",
+            "https://issues.apache.org/jira/browse/LOG4J2-3230",
+            "https://lists.debian.org/debian-lts-announce/2021/12/msg00017.html",
+            "https://lists.fedoraproject.org/archives/list/package-announce@lists.fedoraproject.org/message/EOKPQGV24RRBBI4TBZUDQMM4MEH7MXCY",
+            "https://lists.fedoraproject.org/archives/list/package-announce@lists.fedoraproject.org/message/SIG7FZULMNK2XF6FZRU4VWYDQXNMUGAJ",
+            "https://logging.apache.org/log4j/2.x/security.html",
+            "https://logging.apache.org/log4j/2.x/security.html#CVE-2021-45105",
+            "https://nvd.nist.gov/vuln/detail/CVE-2021-45105",
+            "https://psirt.global.sonicwall.com/vuln-detail/SNWLID-2021-0032",
+            "https://sec.cloudapps.cisco.com/security/center/content/CiscoSecurityAdvisory/cisco-sa-apache-log4j-qRuKNEbd",
+            "https://security.netapp.com/advisory/ntap-20211218-0001",
+            "https://security.netapp.com/advisory/ntap-20211218-0001/",
+            "https://tools.cisco.com/security/center/content/CiscoSecurityAdvisory/cisco-sa-apache-log4j-qRuKNEbd",
+            "https://ubuntu.com/security/notices/USN-5203-1",
+            "https://ubuntu.com/security/notices/USN-5222-1",
+            "https://wiki.ubuntu.com/SecurityTeam/KnowledgeBase/Log4Shell",
+            "https://www.cve.org/CVERecord?id=CVE-2021-45105",
+            "https://www.debian.org/security/2021/dsa-5024",
+            "https://www.kb.cert.org/vuls/id/930724",
+            "https://www.openwall.com/lists/oss-security/2021/12/19/1",
+            "https://www.oracle.com/security-alerts/cpuapr2022.html",
+            "https://www.oracle.com/security-alerts/cpujan2022.html",
+            "https://www.oracle.com/security-alerts/cpujul2022.html",
+            "https://www.zerodayinitiative.com/advisories/ZDI-21-1541",
+            "https://www.zerodayinitiative.com/advisories/ZDI-21-1541/"
+          ],
+          "PublishedDate": "2021-12-18T12:15:07.433Z",
+          "LastModifiedDate": "2026-08-25T16:28:27.31Z"
+        },
+        {
+          "VulnerabilityID": "CVE-2021-44832",
+          "VendorIDs": [
+            "GHSA-8489-44mv-ggj8"
+          ],
+          "PkgID": "org.apache.logging.log4j:log4j-core:2.14.1::f500351e",
+          "PkgName": "org.apache.logging.log4j:log4j-core",
+          "PkgIdentifier": {
+            "PURL": "pkg:maven/org.apache.logging.log4j/log4j-core@2.14.1",
+            "UID": "22fd2aa24542daca"
+          },
+          "InstalledVersion": "2.14.1",
+          "FixedVersion": "2.3.2, 2.12.4, 2.17.1",
+          "Status": "fixed",
+          "SeveritySource": "ghsa",
+          "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2021-44832",
+          "DataSource": {
+            "ID": "ghsa",
+            "Name": "GitHub Security Advisory Maven",
+            "URL": "https://github.com/advisories?query=type%3Areviewed+ecosystem%3Amaven"
+          },
+          "Fingerprint": "sha256:f052b2145ecc8c2a29e257deff6f371b94e9cd2a7e48623df7906f70ec13b227",
+          "Title": "log4j-core: remote code execution via JDBC Appender",
+          "Description": "Apache Log4j2 versions 2.0-beta7 through 2.17.0 (excluding security fix releases 2.3.2 and 2.12.4) are vulnerable to a remote code execution (RCE) attack when a configuration uses a JDBC Appender with a JNDI LDAP data source URI when an attacker has control of the target LDAP server. This issue is fixed by limiting JNDI data source names to the java protocol in Log4j2 versions 2.17.1, 2.12.4, and 2.3.2.",
+          "Severity": "MEDIUM",
+          "CweIDs": [
+            "CWE-20",
+            "CWE-74"
+          ],
+          "VendorSeverity": {
+            "amazon": 4,
+            "ghsa": 2,
+            "nvd": 2,
+            "redhat": 2,
+            "ubuntu": 2
+          },
+          "CVSS": {
+            "ghsa": {
+              "V3Vector": "CVSS:3.1/AV:N/AC:H/PR:H/UI:N/S:U/C:H/I:H/A:H",
+              "V3Score": 6.6
+            },
+            "nvd": {
+              "V2Vector": "AV:N/AC:M/Au:S/C:C/I:C/A:C",
+              "V3Vector": "CVSS:3.1/AV:N/AC:H/PR:H/UI:N/S:U/C:H/I:H/A:H",
+              "V2Score": 8.5,
+              "V3Score": 6.6
+            },
+            "redhat": {
+              "V3Vector": "CVSS:3.1/AV:N/AC:H/PR:H/UI:N/S:U/C:H/I:H/A:H",
+              "V3Score": 6.6
+            }
+          },
+          "References": [
+            "http://www.openwall.com/lists/oss-security/2021/12/28/1",
+            "https://access.redhat.com/security/cve/CVE-2021-44832",
+            "https://cert-portal.siemens.com/productcert/pdf/ssa-784507.pdf",
+            "https://github.com/apache/logging-log4j2",
+            "https://github.com/apache/logging-log4j2/commit/05db5f9527254632b59aed2a1d78a32c5ab74f16",
+            "https://issues.apache.org/jira/browse/LOG4J2-3293",
+            "https://lists.apache.org/thread/s1o5vlo78ypqxnzn6p8zf6t9shtq5143",
+            "https://lists.debian.org/debian-lts-announce/2021/12/msg00036.html",
+            "https://lists.fedoraproject.org/archives/list/package-announce@lists.fedoraproject.org/message/EVV25FXL4FU5X6X5BSL7RLQ7T6F65MRA",
+            "https://lists.fedoraproject.org/archives/list/package-announce@lists.fedoraproject.org/message/EVV25FXL4FU5X6X5BSL7RLQ7T6F65MRA/",
+            "https://lists.fedoraproject.org/archives/list/package-announce@lists.fedoraproject.org/message/T57MPJUW3MA6QGWZRTMCHHMMPQNVKGFC",
+            "https://lists.fedoraproject.org/archives/list/package-announce@lists.fedoraproject.org/message/T57MPJUW3MA6QGWZRTMCHHMMPQNVKGFC/",
+            "https://nvd.nist.gov/vuln/detail/CVE-2021-44832",
+            "https://sec.cloudapps.cisco.com/security/center/content/CiscoSecurityAdvisory/cisco-sa-apache-log4j-qRuKNEbd",
+            "https://security.netapp.com/advisory/ntap-20220104-0001",
+            "https://security.netapp.com/advisory/ntap-20220104-0001/",
+            "https://tools.cisco.com/security/center/content/CiscoSecurityAdvisory/cisco-sa-apache-log4j-qRuKNEbd",
+            "https://ubuntu.com/security/notices/USN-5222-1",
+            "https://www.cve.org/CVERecord?id=CVE-2021-44832",
+            "https://www.oracle.com/security-alerts/cpuapr2022.html",
+            "https://www.oracle.com/security-alerts/cpujan2022.html",
+            "https://www.oracle.com/security-alerts/cpujul2022.html"
+          ],
+          "PublishedDate": "2021-12-28T20:15:08.4Z",
+          "LastModifiedDate": "2026-06-17T04:12:52.013Z"
+        },
+        {
+          "VulnerabilityID": "CVE-2025-68161",
+          "VendorIDs": [
+            "GHSA-vc5p-v9hr-52mj"
+          ],
+          "PkgID": "org.apache.logging.log4j:log4j-core:2.14.1::f500351e",
+          "PkgName": "org.apache.logging.log4j:log4j-core",
+          "PkgIdentifier": {
+            "PURL": "pkg:maven/org.apache.logging.log4j/log4j-core@2.14.1",
+            "UID": "22fd2aa24542daca"
+          },
+          "InstalledVersion": "2.14.1",
+          "FixedVersion": "2.25.3",
+          "Status": "fixed",
+          "SeveritySource": "ghsa",
+          "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2025-68161",
+          "DataSource": {
+            "ID": "ghsa",
+            "Name": "GitHub Security Advisory Maven",
+            "URL": "https://github.com/advisories?query=type%3Areviewed+ecosystem%3Amaven"
+          },
+          "Fingerprint": "sha256:7ab496707d65d92a63ddacda167c469c6b8d36e2fddaa376e0b751491c75d26d",
+          "Title": "Apache Log4j: Apache Log4j Core: Information disclosure via missing TLS hostname verification",
+          "Description": "The Socket Appender in Apache Log4j Core versions 2.0-beta9 through 2.25.2 does not perform TLS hostname verification of the peer certificate, even when the  verifyHostName https://logging.apache.org/log4j/2.x/manual/appenders/network.html#SslConfiguration-attr-verifyHostName  configuration attribute or the  log4j2.sslVerifyHostName https://logging.apache.org/log4j/2.x/manual/systemproperties.html#log4j2.sslVerifyHostName  system property is set to true.\n\nThis issue may allow a man-in-the-middle attacker to intercept or redirect log traffic under the following conditions:\n\n  *  The attacker is able to intercept or redirect network traffic between the client and the log receiver.\n  *  The attacker can present a server certificate issued by a certification authority trusted by the Socket Appender’s configured trust store (or by the default Java trust store if no custom trust store is configured).\n\n\nUsers are advised to upgrade to Apache Log4j Core version 2.25.3, which addresses this issue.\n\nAs an alternative mitigation, the Socket Appender may be configured to use a private or restricted trust root to limit the set of trusted certificates.",
+          "Severity": "MEDIUM",
+          "CweIDs": [
+            "CWE-297",
+            "CWE-295"
+          ],
+          "VendorSeverity": {
+            "amazon": 2,
+            "ghsa": 2,
+            "nvd": 2,
+            "redhat": 2
+          },
+          "CVSS": {
+            "ghsa": {
+              "V40Vector": "CVSS:4.0/AV:N/AC:H/AT:N/PR:N/UI:N/VC:L/VI:N/VA:N/SC:N/SI:L/SA:N",
+              "V40Score": 6.3
+            },
+            "nvd": {
+              "V3Vector": "CVSS:3.1/AV:N/AC:H/PR:N/UI:N/S:U/C:L/I:L/A:N",
+              "V3Score": 4.8
+            },
+            "redhat": {
+              "V3Vector": "CVSS:3.1/AV:N/AC:H/PR:N/UI:N/S:U/C:H/I:N/A:N",
+              "V3Score": 5.9
+            }
+          },
+          "References": [
+            "http://www.openwall.com/lists/oss-security/2025/12/18/1",
+            "https://access.redhat.com/security/cve/CVE-2025-68161",
+            "https://advisory.echohq.com/cve/CVE-2025-68161",
+            "https://github.com/apache/logging-log4j2",
+            "https://github.com/apache/logging-log4j2/commit/3b93748497e1adbbd027fda8a5e7268ec5d0d578",
+            "https://github.com/apache/logging-log4j2/pull/4002",
+            "https://lists.apache.org/thread/xr33kyxq3sl67lwb61ggvm1fzc8k7dvx",
+            "https://lists.debian.org/debian-lts-announce/2026/01/msg00015.html",
+            "https://logging.apache.org/cyclonedx/vdr.xml",
+            "https://logging.apache.org/log4j/2.x/manual/appenders/network.html#SslConfiguration-attr-verifyHostName",
+            "https://logging.apache.org/log4j/2.x/manual/systemproperties.html#log4j2.sslVerifyHostName",
+            "https://logging.apache.org/security.html#CVE-2025-68161",
+            "https://nvd.nist.gov/vuln/detail/CVE-2025-68161",
+            "https://www.cve.org/CVERecord?id=CVE-2025-68161"
+          ],
+          "PublishedDate": "2025-12-18T21:15:57.96Z",
+          "LastModifiedDate": "2026-06-17T09:58:39.58Z"
+        },
+        {
+          "VulnerabilityID": "CVE-2026-34477",
+          "VendorIDs": [
+            "GHSA-6hg6-v5c8-fphq"
+          ],
+          "PkgID": "org.apache.logging.log4j:log4j-core:2.14.1::f500351e",
+          "PkgName": "org.apache.logging.log4j:log4j-core",
+          "PkgIdentifier": {
+            "PURL": "pkg:maven/org.apache.logging.log4j/log4j-core@2.14.1",
+            "UID": "22fd2aa24542daca"
+          },
+          "InstalledVersion": "2.14.1",
+          "FixedVersion": "2.25.4",
+          "Status": "fixed",
+          "SeveritySource": "ghsa",
+          "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2026-34477",
+          "DataSource": {
+            "ID": "ghsa",
+            "Name": "GitHub Security Advisory Maven",
+            "URL": "https://github.com/advisories?query=type%3Areviewed+ecosystem%3Amaven"
+          },
+          "Fingerprint": "sha256:2a05f0611a02c4c6943c236df9f1124a932ae1690126e5112fc72814be7178bd",
+          "Title": "org.apache.logging.log4j/log4j-core: Apache Log4j Core: Man-in-the-middle attack due to incomplete hostname verification",
+          "Description": "The fix for  CVE-2025-68161 https://logging.apache.org/security.html#CVE-2025-68161  was incomplete: it addressed hostname verification only when enabled via the  log4j2.sslVerifyHostName https://logging.apache.org/log4j/2.x/manual/systemproperties.html#log4j2.sslVerifyHostName  system property, but not when configured through the  verifyHostName https://logging.apache.org/log4j/2.x/manual/appenders/network.html#SslConfiguration-attr-verifyHostName  attribute of the \u003cSsl\u003e element.\n\nAlthough the verifyHostName configuration attribute was introduced in Log4j Core 2.12.0, it was silently ignored in all versions through 2.25.3, leaving TLS connections vulnerable to interception regardless of the configured value.\n\nA network-based attacker may be able to perform a man-in-the-middle attack when all of the following conditions are met:\n\n  *  An SMTP, Socket, or Syslog appender is in use.\n  *  TLS is configured via a nested \u003cSsl\u003e element.\n  *  The attacker can present a certificate issued by a CA trusted by the appender's configured trust store, or by the default Java trust store if none is configured.\nThis issue does not affect users of the HTTP appender, which uses a separate  verifyHostname https://logging.apache.org/log4j/2.x/manual/appenders/network.html#HttpAppender-attr-verifyHostName  attribute that was not subject to this bug and verifies host names by default.\n\nUsers are advised to upgrade to Apache Log4j Core 2.25.4, which corrects this issue.",
+          "Severity": "MEDIUM",
+          "CweIDs": [
+            "CWE-297",
+            "CWE-295"
+          ],
+          "VendorSeverity": {
+            "ghsa": 2,
+            "nvd": 2,
+            "redhat": 2
+          },
+          "CVSS": {
+            "ghsa": {
+              "V40Vector": "CVSS:4.0/AV:N/AC:H/AT:N/PR:N/UI:N/VC:L/VI:N/VA:N/SC:N/SI:L/SA:N",
+              "V40Score": 6.3
+            },
+            "nvd": {
+              "V3Vector": "CVSS:3.1/AV:N/AC:H/PR:N/UI:N/S:U/C:N/I:H/A:N",
+              "V3Score": 5.9
+            },
+            "redhat": {
+              "V3Vector": "CVSS:3.1/AV:N/AC:H/PR:L/UI:N/S:U/C:H/I:H/A:N",
+              "V3Score": 6.8
+            }
+          },
+          "References": [
+            "https://access.redhat.com/security/cve/CVE-2026-34477",
+            "https://advisory.echohq.com/cve/CVE-2026-34477",
+            "https://github.com/apache/logging-log4j2",
+            "https://github.com/apache/logging-log4j2/pull/4075",
+            "https://lists.apache.org/thread/lkx8cl46t2bvkcwfcb2pd43ygc097lq4",
+            "https://logging.apache.org/cyclonedx/vdr.xml",
+            "https://logging.apache.org/log4j/2.x/manual/appenders/network.html#SslConfiguration-attr-verifyHostName",
+            "https://logging.apache.org/security.html#CVE-2026-34477",
+            "https://nvd.nist.gov/vuln/detail/CVE-2026-34477",
+            "https://www.cve.org/CVERecord?id=CVE-2026-34477"
+          ],
+          "PublishedDate": "2026-04-10T16:16:30.843Z",
+          "LastModifiedDate": "2026-10-26T22:10:00.163Z"
+        },
+        {
+          "VulnerabilityID": "CVE-2026-34479",
+          "VendorIDs": [
+            "GHSA-h383-gmxw-35v2"
+          ],
+          "PkgID": "org.apache.logging.log4j:log4j-core:2.14.1::f500351e",
+          "PkgName": "org.apache.logging.log4j:log4j-core",
+          "PkgIdentifier": {
+            "PURL": "pkg:maven/org.apache.logging.log4j/log4j-core@2.14.1",
+            "UID": "22fd2aa24542daca"
+          },
+          "InstalledVersion": "2.14.1",
+          "FixedVersion": "2.25.4",
+          "Status": "fixed",
+          "SeveritySource": "ghsa",
+          "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2026-34479",
+          "DataSource": {
+            "ID": "ghsa",
+            "Name": "GitHub Security Advisory Maven",
+            "URL": "https://github.com/advisories?query=type%3Areviewed+ecosystem%3Amaven"
+          },
+          "Fingerprint": "sha256:f000feebbf3d5bb06ab2b98f1234fdea8e38541fa0bf8e9210ebfb77e3778bbd",
+          "Title": "org.apache.logging.log4j/log4j-1.2-api: Apache Log4j 1-to-Log4j 2 bridge: Log processing denial of service due to improper XML escaping",
+          "Description": "The Log4j1XmlLayout from the Apache Log4j 1-to-Log4j 2 bridge fails to escape characters forbidden by the XML 1.0 standard, producing malformed XML output. Conforming XML parsers are required to reject documents containing such characters with a fatal error, which may cause downstream log processing systems to drop or fail to index affected records.\n\nTwo groups of users are affected:\n\n  *  Those using Log4j1XmlLayout directly in a Log4j Core 2 configuration file.\n  *  Those using the Log4j 1 configuration compatibility layer with org.apache.log4j.xml.XMLLayout specified as the layout class.\n\n\nUsers are advised to upgrade to Apache Log4j 1-to-Log4j 2 bridge version 2.25.4, which corrects this issue.\n\nNote: The Apache Log4j 1-to-Log4j 2 bridge is deprecated and will not be present in Log4j 3. Users are encouraged to consult the  Log4j 1 to Log4j 2 migration guide https://logging.apache.org/log4j/2.x/migrate-from-log4j1.html , and specifically the section on eliminating reliance on the bridge.",
+          "Severity": "MEDIUM",
+          "CweIDs": [
+            "CWE-116"
+          ],
+          "VendorSeverity": {
+            "ghsa": 2,
+            "nvd": 3,
+            "redhat": 2,
+            "ubuntu": 2
+          },
+          "CVSS": {
+            "ghsa": {
+              "V40Vector": "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:N/VI:N/VA:N/SC:N/SI:L/SA:N",
+              "V40Score": 6.9
+            },
+            "nvd": {
+              "V3Vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:H/A:N",
+              "V3Score": 7.5
+            },
+            "redhat": {
+              "V3Vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:L",
+              "V3Score": 5.3
+            }
+          },
+          "References": [
+            "http://www.openwall.com/lists/oss-security/2026/04/10/8",
+            "https://access.redhat.com/security/cve/CVE-2026-34479",
+            "https://advisory.echohq.com/cve/CVE-2026-34479",
+            "https://github.com/apache/logging-log4j2",
+            "https://github.com/apache/logging-log4j2/pull/4078",
+            "https://lists.apache.org/thread/gd0hp6mj17rn3kj279vgy4p7kd4zz5on",
+            "https://logging.apache.org/cyclonedx/vdr.xml",
+            "https://logging.apache.org/log4j/2.x/migrate-from-log4j1.html",
+            "https://logging.apache.org/security.html#CVE-2026-34479",
+            "https://nvd.nist.gov/vuln/detail/CVE-2026-34479",
+            "https://www.cve.org/CVERecord?id=CVE-2026-34479"
+          ],
+          "PublishedDate": "2026-04-10T16:16:31.27Z",
+          "LastModifiedDate": "2026-10-26T21:10:00.17Z"
+        },
+        {
+          "VulnerabilityID": "CVE-2026-34480",
+          "VendorIDs": [
+            "GHSA-3pxv-7cmr-fjr4"
+          ],
+          "PkgID": "org.apache.logging.log4j:log4j-core:2.14.1::f500351e",
+          "PkgName": "org.apache.logging.log4j:log4j-core",
+          "PkgIdentifier": {
+            "PURL": "pkg:maven/org.apache.logging.log4j/log4j-core@2.14.1",
+            "UID": "22fd2aa24542daca"
+          },
+          "InstalledVersion": "2.14.1",
+          "FixedVersion": "2.25.4",
+          "Status": "fixed",
+          "SeveritySource": "ghsa",
+          "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2026-34480",
+          "DataSource": {
+            "ID": "ghsa",
+            "Name": "GitHub Security Advisory Maven",
+            "URL": "https://github.com/advisories?query=type%3Areviewed+ecosystem%3Amaven"
+          },
+          "Fingerprint": "sha256:49459fe16b3293cc75b28febe1685189c827ae8127fade836dffa3c9d4c2768b",
+          "Title": "org.apache.logging.log4j/log4j-core: Apache Log4j Core: Invalid XML output causes denial of service in logging",
+          "Description": "Apache Log4j Core's  XmlLayout https://logging.apache.org/log4j/2.x/manual/layouts.html#XmlLayout , in versions up to and including 2.25.3, fails to sanitize characters forbidden by the  XML 1.0 specification https://www.w3.org/TR/xml/#charsets  producing invalid XML output whenever a log message or MDC value contains such characters.\n\nThe impact depends on the StAX implementation in use:\n\n  *  JRE built-in StAX: Forbidden characters are silently written to the output, producing malformed XML. Conforming parsers must reject such documents with a fatal error, which may cause downstream log-processing systems to drop the affected records.\n  *  Alternative StAX implementations (e.g.,  Woodstox https://github.com/FasterXML/woodstox , a transitive dependency of the Jackson XML Dataformat module): An exception is thrown during the logging call, and the log event is never delivered to its intended appender, only to Log4j's internal status logger.\n\n\nUsers are advised to upgrade to Apache Log4j Core 2.25.4, which corrects this issue by sanitizing forbidden characters before XML output.",
+          "Severity": "MEDIUM",
+          "CweIDs": [
+            "CWE-116"
+          ],
+          "VendorSeverity": {
+            "ghsa": 2,
+            "nvd": 3,
+            "redhat": 2,
+            "ubuntu": 2
+          },
+          "CVSS": {
+            "ghsa": {
+              "V40Vector": "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:N/VI:N/VA:N/SC:N/SI:L/SA:N",
+              "V40Score": 6.9
+            },
+            "nvd": {
+              "V3Vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:H/A:N",
+              "V3Score": 7.5
+            },
+            "redhat": {
+              "V3Vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:L",
+              "V3Score": 5.3
+            }
+          },
+          "References": [
+            "http://www.openwall.com/lists/oss-security/2026/04/10/9",
+            "https://access.redhat.com/security/cve/CVE-2026-34480",
+            "https://advisory.echohq.com/cve/CVE-2026-34480",
+            "https://github.com/apache/logging-log4j2",
+            "https://github.com/apache/logging-log4j2/pull/4077",
+            "https://lists.apache.org/thread/5x0hcnng0chhghp6jgjdp3qmbbhfjzhb",
+            "https://logging.apache.org/cyclonedx/vdr.xml",
+            "https://logging.apache.org/log4j/2.x/manual/layouts.html#XmlLayout",
+            "https://logging.apache.org/security.html#CVE-2026-34480",
+            "https://nvd.nist.gov/vuln/detail/CVE-2026-34480",
+            "https://www.cve.org/CVERecord?id=CVE-2026-34480"
+          ],
+          "PublishedDate": "2026-04-10T16:16:31.463Z",
+          "LastModifiedDate": "2026-10-26T22:10:00.163Z"
+        },
+        {
+          "VulnerabilityID": "CVE-2022-1471",
+          "VendorIDs": [
+            "GHSA-mjmj-j48q-9wg2"
+          ],
+          "PkgID": "org.yaml:snakeyaml:1.29::eeeeb199",
+          "PkgName": "org.yaml:snakeyaml",
+          "PkgIdentifier": {
+            "PURL": "pkg:maven/org.yaml/snakeyaml@1.29",
+            "UID": "1917ec99f3902d38"
+          },
+          "InstalledVersion": "1.29",
+          "FixedVersion": "2.0",
+          "Status": "fixed",
+          "SeveritySource": "ghsa",
+          "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2022-1471",
+          "DataSource": {
+            "ID": "ghsa",
+            "Name": "GitHub Security Advisory Maven",
+            "URL": "https://github.com/advisories?query=type%3Areviewed+ecosystem%3Amaven"
+          },
+          "Fingerprint": "sha256:7dd8355b043a8deeea382685510a51d913c683158f5613a02b7e9e926a66c0d7",
+          "Title": "SnakeYaml: Constructor Deserialization Remote Code Execution",
+          "Description": "SnakeYaml's Constructor() class does not restrict types which can be instantiated during deserialization. Deserializing yaml content provided by an attacker can lead to remote code execution. We recommend using SnakeYaml's SafeConsturctor when parsing untrusted content to restrict deserialization. We recommend upgrading to version 2.0 and beyond.",
+          "Severity": "HIGH",
+          "CweIDs": [
+            "CWE-20",
+            "CWE-502"
+          ],
+          "VendorSeverity": {
+            "alma": 3,
+            "ghsa": 3,
+            "nvd": 4,
+            "oracle-oval": 3,
+            "redhat": 3,
+            "rocky": 3
+          },
+          "CVSS": {
+            "ghsa": {
+              "V3Vector": "CVSS:3.1/AV:N/AC:L/PR:L/UI:N/S:U/C:H/I:H/A:L",
+              "V3Score": 8.3
+            },
+            "nvd": {
+              "V3Vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H",
+              "V3Score": 9.8
+            },
+            "redhat": {
+              "V3Vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H",
+              "V3Score": 9.8
+            }
+          },
+          "References": [
+            "http://packetstormsecurity.com/files/175095/PyTorch-Model-Server-Registration-Deserialization-Remote-Code-Execution.html",
+            "http://www.openwall.com/lists/oss-security/2023/11/19/1",
+            "https://access.redhat.com/errata/RHSA-2022:9058",
+            "https://access.redhat.com/security/cve/CVE-2022-1471",
+            "https://bitbucket.org/snakeyaml/snakeyaml",
+            "https://bitbucket.org/snakeyaml/snakeyaml/commits/5014df1a36f50aca54405bb8433bc99a8847f758",
+            "https://bitbucket.org/snakeyaml/snakeyaml/commits/acc44099f5f4af26ff86b4e4e4cc1c874e2dc5c4",
+            "https://bitbucket.org/snakeyaml/snakeyaml/issues/561/cve-2022-1471-vulnerability-in#comment-64581479",
+            "https://bitbucket.org/snakeyaml/snakeyaml/issues/561/cve-2022-1471-vulnerability-in#comment-64634374",
+            "https://bitbucket.org/snakeyaml/snakeyaml/issues/561/cve-2022-1471-vulnerability-in#comment-64876314",
+            "https://bitbucket.org/snakeyaml/snakeyaml/wiki/CVE-2022-1471",
+            "https://bugzilla.redhat.com/2150009",
+            "https://bugzilla.redhat.com/show_bug.cgi?id=2150009",
+            "https://confluence.atlassian.com/security/cve-2022-1471-snakeyaml-library-rce-vulnerability-in-multiple-products-1296171009.html",
+            "https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2022-1471",
+            "https://errata.almalinux.org/8/ALSA-2022-9058.html",
+            "https://errata.rockylinux.org/RLSA-2022:9058",
+            "https://github.com/google/security-research/security/advisories/GHSA-mjmj-j48q-9wg2",
+            "https://github.com/mbechler/marshalsec",
+            "https://groups.google.com/g/kubernetes-security-announce/c/mwrakFaEdnc",
+            "https://infosecwriteups.com/%EF%B8%8F-inside-the-160-comment-fight-to-fix-snakeyamls-rce-default-1a20c5ca4d4c",
+            "https://linux.oracle.com/cve/CVE-2022-1471.html",
+            "https://linux.oracle.com/errata/ELSA-2022-9058-1.html",
+            "https://nvd.nist.gov/vuln/detail/CVE-2022-1471",
+            "https://security.netapp.com/advisory/ntap-20230818-0015",
+            "https://security.netapp.com/advisory/ntap-20230818-0015/",
+            "https://security.netapp.com/advisory/ntap-20240621-0006",
+            "https://security.netapp.com/advisory/ntap-20240621-0006/",
+            "https://snyk.io/blog/unsafe-deserialization-snakeyaml-java-cve-2022-1471",
+            "https://www.cve.org/CVERecord?id=CVE-2022-1471",
+            "https://www.github.com/mbechler/marshalsec/blob/master/marshalsec.pdf?raw=true"
+          ],
+          "PublishedDate": "2022-12-01T11:15:10.553Z",
+          "LastModifiedDate": "2026-06-17T04:22:30.807Z"
+        },
+        {
+          "VulnerabilityID": "CVE-2022-25857",
+          "VendorIDs": [
+            "GHSA-3mc7-4q67-w48m"
+          ],
+          "PkgID": "org.yaml:snakeyaml:1.29::eeeeb199",
+          "PkgName": "org.yaml:snakeyaml",
+          "PkgIdentifier": {
+            "PURL": "pkg:maven/org.yaml/snakeyaml@1.29",
+            "UID": "1917ec99f3902d38"
+          },
+          "InstalledVersion": "1.29",
+          "FixedVersion": "1.31",
+          "Status": "fixed",
+          "SeveritySource": "ghsa",
+          "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2022-25857",
+          "DataSource": {
+            "ID": "ghsa",
+            "Name": "GitHub Security Advisory Maven",
+            "URL": "https://github.com/advisories?query=type%3Areviewed+ecosystem%3Amaven"
+          },
+          "Fingerprint": "sha256:a86c50515d3754a474b9cc0bb33ecc41535e7cb31672b82db62f6649e16212d3",
+          "Title": "snakeyaml: Denial of Service due to missing nested depth limitation for collections",
+          "Description": "The package org.yaml:snakeyaml from 0 and before 1.31 are vulnerable to Denial of Service (DoS) due missing to nested depth limitation for collections.",
+          "Severity": "HIGH",
+          "CweIDs": [
+            "CWE-776"
+          ],
+          "VendorSeverity": {
+            "alma": 2,
+            "amazon": 3,
+            "ghsa": 3,
+            "nvd": 3,
+            "oracle-oval": 2,
+            "redhat": 3,
+            "rocky": 2,
+            "ubuntu": 1
+          },
+          "CVSS": {
+            "ghsa": {
+              "V3Vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:H",
+              "V3Score": 7.5
+            },
+            "nvd": {
+              "V3Vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:H",
+              "V3Score": 7.5
+            },
+            "redhat": {
+              "V3Vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:H",
+              "V3Score": 7.5
+            }
+          },
+          "References": [
+            "https://access.redhat.com/errata/RHSA-2022:6820",
+            "https://access.redhat.com/security/cve/CVE-2022-25857",
+            "https://bitbucket.org/snakeyaml/snakeyaml/commits/fc300780da21f4bb92c148bc90257201220cf174",
+            "https://bitbucket.org/snakeyaml/snakeyaml/issues/525",
+            "https://bugzilla.redhat.com/2126789",
+            "https://bugzilla.redhat.com/show_bug.cgi?id=2126789",
+            "https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2022-25857",
+            "https://errata.almalinux.org/8/ALSA-2022-6820.html",
+            "https://errata.rockylinux.org/RLSA-2022:6820",
+            "https://github.com/snakeyaml/snakeyaml",
+            "https://github.com/snakeyaml/snakeyaml/commit/fc300780da21f4bb92c148bc90257201220cf174",
+            "https://linux.oracle.com/cve/CVE-2022-25857.html",
+            "https://linux.oracle.com/errata/ELSA-2022-6820.html",
+            "https://lists.debian.org/debian-lts-announce/2022/10/msg00001.html",
+            "https://nvd.nist.gov/vuln/detail/CVE-2022-25857",
+            "https://security.netapp.com/advisory/ntap-20240315-0010",
+            "https://security.netapp.com/advisory/ntap-20240315-0010/",
+            "https://security.snyk.io/vuln/SNYK-JAVA-ORGYAML-2806360",
+            "https://ubuntu.com/security/notices/USN-5944-1",
+            "https://www.cve.org/CVERecord?id=CVE-2022-25857"
+          ],
+          "PublishedDate": "2022-08-30T05:15:07.667Z",
+          "LastModifiedDate": "2026-06-17T04:34:24.11Z"
+        },
+        {
+          "VulnerabilityID": "CVE-2022-38749",
+          "VendorIDs": [
+            "GHSA-c4r9-r8fh-9vj2"
+          ],
+          "PkgID": "org.yaml:snakeyaml:1.29::eeeeb199",
+          "PkgName": "org.yaml:snakeyaml",
+          "PkgIdentifier": {
+            "PURL": "pkg:maven/org.yaml/snakeyaml@1.29",
+            "UID": "1917ec99f3902d38"
+          },
+          "InstalledVersion": "1.29",
+          "FixedVersion": "1.31",
+          "Status": "fixed",
+          "SeveritySource": "ghsa",
+          "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2022-38749",
+          "DataSource": {
+            "ID": "ghsa",
+            "Name": "GitHub Security Advisory Maven",
+            "URL": "https://github.com/advisories?query=type%3Areviewed+ecosystem%3Amaven"
+          },
+          "Fingerprint": "sha256:330b7a0272f0f0b2c503471a4beac6b9faff88635c84f9a6f4f90ab764e8d21b",
+          "Title": "snakeyaml: Uncaught exception in org.yaml.snakeyaml.composer.Composer.composeSequenceNode",
+          "Description": "Using snakeYAML to parse untrusted YAML files may be vulnerable to Denial of Service attacks (DOS). If the parser is running on user supplied input, an attacker may supply content that causes the parser to crash by stackoverflow.",
+          "Severity": "MEDIUM",
+          "CweIDs": [
+            "CWE-121",
+            "CWE-787"
+          ],
+          "VendorSeverity": {
+            "ghsa": 2,
+            "nvd": 2,
+            "redhat": 2,
+            "ubuntu": 2
+          },
+          "CVSS": {
+            "ghsa": {
+              "V3Vector": "CVSS:3.1/AV:N/AC:L/PR:L/UI:N/S:U/C:N/I:N/A:H",
+              "V3Score": 6.5
+            },
+            "nvd": {
+              "V3Vector": "CVSS:3.1/AV:N/AC:L/PR:L/UI:N/S:U/C:N/I:N/A:H",
+              "V3Score": 6.5
+            },
+            "redhat": {
+              "V3Vector": "CVSS:3.1/AV:N/AC:L/PR:L/UI:N/S:U/C:N/I:N/A:H",
+              "V3Score": 6.5
+            }
+          },
+          "References": [
+            "https://access.redhat.com/security/cve/CVE-2022-38749",
+            "https://arxiv.org/pdf/2306.05534.pdf",
+            "https://bitbucket.org/snakeyaml/snakeyaml",
+            "https://bitbucket.org/snakeyaml/snakeyaml/issues/525/got-stackoverflowerror-for-many-open",
+            "https://bugs.chromium.org/p/oss-fuzz/issues/detail?id=47024",
+            "https://lists.debian.org/debian-lts-announce/2022/10/msg00001.html",
+            "https://nvd.nist.gov/vuln/detail/CVE-2022-38749",
+            "https://security.gentoo.org/glsa/202305-28",
+            "https://security.netapp.com/advisory/ntap-20240315-0010",
+            "https://security.netapp.com/advisory/ntap-20240315-0010/",
+            "https://ubuntu.com/security/notices/USN-5944-1",
+            "https://www.cve.org/CVERecord?id=CVE-2022-38749"
+          ],
+          "PublishedDate": "2022-09-05T10:15:09.673Z",
+          "LastModifiedDate": "2026-06-17T04:57:06.43Z"
+        },
+        {
+          "VulnerabilityID": "CVE-2022-38750",
+          "VendorIDs": [
+            "GHSA-hhhw-99gj-p3c3"
+          ],
+          "PkgID": "org.yaml:snakeyaml:1.29::eeeeb199",
+          "PkgName": "org.yaml:snakeyaml",
+          "PkgIdentifier": {
+            "PURL": "pkg:maven/org.yaml/snakeyaml@1.29",
+            "UID": "1917ec99f3902d38"
+          },
+          "InstalledVersion": "1.29",
+          "FixedVersion": "1.31",
+          "Status": "fixed",
+          "SeveritySource": "ghsa",
+          "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2022-38750",
+          "DataSource": {
+            "ID": "ghsa",
+            "Name": "GitHub Security Advisory Maven",
+            "URL": "https://github.com/advisories?query=type%3Areviewed+ecosystem%3Amaven"
+          },
+          "Fingerprint": "sha256:55f36d622bb02860a1215c019240b8bc73f8769042be97c0eb980021d9378345",
+          "Title": "snakeyaml: Uncaught exception in org.yaml.snakeyaml.constructor.BaseConstructor.constructObject",
+          "Description": "Using snakeYAML to parse untrusted YAML files may be vulnerable to Denial of Service attacks (DOS). If the parser is running on user supplied input, an attacker may supply content that causes the parser to crash by stackoverflow.",
+          "Severity": "MEDIUM",
+          "CweIDs": [
+            "CWE-121",
+            "CWE-787"
+          ],
+          "VendorSeverity": {
+            "amazon": 2,
+            "ghsa": 2,
+            "nvd": 2,
+            "redhat": 2,
+            "ubuntu": 2
+          },
+          "CVSS": {
+            "ghsa": {
+              "V3Vector": "CVSS:3.1/AV:L/AC:L/PR:N/UI:R/S:U/C:N/I:N/A:H",
+              "V3Score": 5.5
+            },
+            "nvd": {
+              "V3Vector": "CVSS:3.1/AV:L/AC:L/PR:N/UI:R/S:U/C:N/I:N/A:H",
+              "V3Score": 5.5
+            },
+            "redhat": {
+              "V3Vector": "CVSS:3.1/AV:L/AC:L/PR:N/UI:R/S:U/C:N/I:N/A:H",
+              "V3Score": 5.5
+            }
+          },
+          "References": [
+            "https://access.redhat.com/security/cve/CVE-2022-38750",
+            "https://bitbucket.org/snakeyaml/snakeyaml",
+            "https://bitbucket.org/snakeyaml/snakeyaml/issues/526/stackoverflow-oss-fuzz-47027",
+            "https://bugs.chromium.org/p/oss-fuzz/issues/detail?id=47027",
+            "https://lists.debian.org/debian-lts-announce/2022/10/msg00001.html",
+            "https://nvd.nist.gov/vuln/detail/CVE-2022-38750",
+            "https://security.gentoo.org/glsa/202305-28",
+            "https://security.netapp.com/advisory/ntap-20240315-0010",
+            "https://security.netapp.com/advisory/ntap-20240315-0010/",
+            "https://ubuntu.com/security/notices/USN-5944-1",
+            "https://www.cve.org/CVERecord?id=CVE-2022-38750"
+          ],
+          "PublishedDate": "2022-09-05T10:15:09.733Z",
+          "LastModifiedDate": "2026-06-17T04:57:06.537Z"
+        },
+        {
+          "VulnerabilityID": "CVE-2022-38751",
+          "VendorIDs": [
+            "GHSA-98wm-3w3q-mw94"
+          ],
+          "PkgID": "org.yaml:snakeyaml:1.29::eeeeb199",
+          "PkgName": "org.yaml:snakeyaml",
+          "PkgIdentifier": {
+            "PURL": "pkg:maven/org.yaml/snakeyaml@1.29",
+            "UID": "1917ec99f3902d38"
+          },
+          "InstalledVersion": "1.29",
+          "FixedVersion": "1.31",
+          "Status": "fixed",
+          "SeveritySource": "ghsa",
+          "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2022-38751",
+          "DataSource": {
+            "ID": "ghsa",
+            "Name": "GitHub Security Advisory Maven",
+            "URL": "https://github.com/advisories?query=type%3Areviewed+ecosystem%3Amaven"
+          },
+          "Fingerprint": "sha256:644526f318a28513ce0ec5f0b313a6758e7debc9b8f52d7c440a586f802d13ca",
+          "Title": "snakeyaml: Uncaught exception in java.base/java.util.regex.Pattern$Ques.match",
+          "Description": "Using snakeYAML to parse untrusted YAML files may be vulnerable to Denial of Service attacks (DOS). If the parser is running on user supplied input, an attacker may supply content that causes the parser to crash by stackoverflow.",
+          "Severity": "MEDIUM",
+          "CweIDs": [
+            "CWE-121",
+            "CWE-787"
+          ],
+          "VendorSeverity": {
+            "amazon": 2,
+            "ghsa": 2,
+            "nvd": 2,
+            "redhat": 2,
+            "ubuntu": 2
+          },
+          "CVSS": {
+            "ghsa": {
+              "V3Vector": "CVSS:3.1/AV:N/AC:L/PR:L/UI:N/S:U/C:N/I:N/A:H",
+              "V3Score": 6.5
+            },
+            "nvd": {
+              "V3Vector": "CVSS:3.1/AV:N/AC:L/PR:L/UI:N/S:U/C:N/I:N/A:H",
+              "V3Score": 6.5
+            },
+            "redhat": {
+              "V3Vector": "CVSS:3.1/AV:N/AC:L/PR:L/UI:N/S:U/C:N/I:N/A:H",
+              "V3Score": 6.5
+            }
+          },
+          "References": [
+            "https://access.redhat.com/security/cve/CVE-2022-38751",
+            "https://bitbucket.org/snakeyaml/snakeyaml",
+            "https://bitbucket.org/snakeyaml/snakeyaml/issues/530/stackoverflow-oss-fuzz-47039",
+            "https://bitbucket.org/snakeyaml/snakeyaml/src/master/src/test/java/org/yaml/snakeyaml/issues/issue530/Fuzzy47039Test.java",
+            "https://bugs.chromium.org/p/oss-fuzz/issues/detail?id=47039",
+            "https://lists.debian.org/debian-lts-announce/2022/10/msg00001.html",
+            "https://nvd.nist.gov/vuln/detail/CVE-2022-38751",
+            "https://security.gentoo.org/glsa/202305-28",
+            "https://security.netapp.com/advisory/ntap-20240315-0010",
+            "https://security.netapp.com/advisory/ntap-20240315-0010/",
+            "https://ubuntu.com/security/notices/USN-5944-1",
+            "https://www.cve.org/CVERecord?id=CVE-2022-38751"
+          ],
+          "PublishedDate": "2022-09-05T10:15:09.793Z",
+          "LastModifiedDate": "2026-06-17T04:57:06.653Z"
+        },
+        {
+          "VulnerabilityID": "CVE-2022-38752",
+          "VendorIDs": [
+            "GHSA-9w3m-gqgf-c4p9"
+          ],
+          "PkgID": "org.yaml:snakeyaml:1.29::eeeeb199",
+          "PkgName": "org.yaml:snakeyaml",
+          "PkgIdentifier": {
+            "PURL": "pkg:maven/org.yaml/snakeyaml@1.29",
+            "UID": "1917ec99f3902d38"
+          },
+          "InstalledVersion": "1.29",
+          "FixedVersion": "1.32",
+          "Status": "fixed",
+          "SeveritySource": "ghsa",
+          "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2022-38752",
+          "DataSource": {
+            "ID": "ghsa",
+            "Name": "GitHub Security Advisory Maven",
+            "URL": "https://github.com/advisories?query=type%3Areviewed+ecosystem%3Amaven"
+          },
+          "Fingerprint": "sha256:687faa0bab26916e88a4290da6147232825be91311ee94943a7a79f6e10a939f",
+          "Title": "snakeyaml: Uncaught exception in java.base/java.util.ArrayList.hashCode",
+          "Description": "Using snakeYAML to parse untrusted YAML files may be vulnerable to Denial of Service attacks (DOS). If the parser is running on user supplied input, an attacker may supply content that causes the parser to crash by stack-overflow.",
+          "Severity": "MEDIUM",
+          "CweIDs": [
+            "CWE-121",
+            "CWE-787"
+          ],
+          "VendorSeverity": {
+            "amazon": 2,
+            "ghsa": 2,
+            "nvd": 2,
+            "redhat": 2
+          },
+          "CVSS": {
+            "ghsa": {
+              "V3Vector": "CVSS:3.1/AV:N/AC:L/PR:L/UI:N/S:U/C:N/I:N/A:H",
+              "V3Score": 6.5
+            },
+            "nvd": {
+              "V3Vector": "CVSS:3.1/AV:N/AC:L/PR:L/UI:N/S:U/C:N/I:N/A:H",
+              "V3Score": 6.5
+            },
+            "redhat": {
+              "V3Vector": "CVSS:3.1/AV:N/AC:L/PR:L/UI:N/S:U/C:N/I:N/A:H",
+              "V3Score": 6.5
+            }
+          },
+          "References": [
+            "https://access.redhat.com/security/cve/CVE-2022-38752",
+            "https://bitbucket.org/snakeyaml/snakeyaml",
+            "https://bitbucket.org/snakeyaml/snakeyaml/issues/531/stackoverflow-oss-fuzz-47081",
+            "https://bugs.chromium.org/p/oss-fuzz/issues/detail?id=47081",
+            "https://nvd.nist.gov/vuln/detail/CVE-2022-38752",
+            "https://security.gentoo.org/glsa/202305-28",
+            "https://security.netapp.com/advisory/ntap-20240315-0009",
+            "https://security.netapp.com/advisory/ntap-20240315-0009/",
+            "https://www.cve.org/CVERecord?id=CVE-2022-38752"
+          ],
+          "PublishedDate": "2022-09-05T10:15:09.847Z",
+          "LastModifiedDate": "2026-06-17T04:57:06.76Z"
+        },
+        {
+          "VulnerabilityID": "CVE-2022-41854",
+          "VendorIDs": [
+            "GHSA-w37g-rhq8-7m4j"
+          ],
+          "PkgID": "org.yaml:snakeyaml:1.29::eeeeb199",
+          "PkgName": "org.yaml:snakeyaml",
+          "PkgIdentifier": {
+            "PURL": "pkg:maven/org.yaml/snakeyaml@1.29",
+            "UID": "1917ec99f3902d38"
+          },
+          "InstalledVersion": "1.29",
+          "FixedVersion": "1.32",
+          "Status": "fixed",
+          "SeveritySource": "ghsa",
+          "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2022-41854",
+          "DataSource": {
+            "ID": "ghsa",
+            "Name": "GitHub Security Advisory Maven",
+            "URL": "https://github.com/advisories?query=type%3Areviewed+ecosystem%3Amaven"
+          },
+          "Fingerprint": "sha256:c640993601d08fa51ab4fe4f10b8dfeba46d004ecb649bea3f44e4f923c7b936",
+          "Title": "dev-java/snakeyaml: DoS via stack overflow",
+          "Description": "Those using Snakeyaml to parse untrusted YAML files may be vulnerable to Denial of Service attacks (DOS). If the parser is running on user supplied input, an attacker may supply content that causes the parser to crash by stack overflow. This effect may support a denial of service attack.",
+          "Severity": "MEDIUM",
+          "CweIDs": [
+            "CWE-121",
+            "CWE-787"
+          ],
+          "VendorSeverity": {
+            "amazon": 2,
+            "ghsa": 2,
+            "nvd": 2,
+            "redhat": 2
+          },
+          "CVSS": {
+            "ghsa": {
+              "V3Vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:R/S:U/C:N/I:N/A:H",
+              "V3Score": 6.5
+            },
+            "nvd": {
+              "V3Vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:R/S:U/C:N/I:N/A:H",
+              "V3Score": 6.5
+            },
+            "redhat": {
+              "V3Vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:R/S:U/C:N/I:N/A:H",
+              "V3Score": 6.5
+            }
+          },
+          "References": [
+            "https://access.redhat.com/security/cve/CVE-2022-41854",
+            "https://bitbucket.org/snakeyaml/snakeyaml",
+            "https://bitbucket.org/snakeyaml/snakeyaml/commits/e230a1758842beec93d28eddfde568c21774780a",
+            "https://bitbucket.org/snakeyaml/snakeyaml/issues/531",
+            "https://bitbucket.org/snakeyaml/snakeyaml/issues/543/stackoverflow-oss-fuzz-50355",
+            "https://bugs.chromium.org/p/oss-fuzz/issues/detail?id=50355",
+            "https://lists.fedoraproject.org/archives/list/package-announce@lists.fedoraproject.org/message/3DDXEXXWAZGF5AVHIPGFPXIWL6TSMKJE",
+            "https://lists.fedoraproject.org/archives/list/package-announce@lists.fedoraproject.org/message/3DDXEXXWAZGF5AVHIPGFPXIWL6TSMKJE/",
+            "https://lists.fedoraproject.org/archives/list/package-announce@lists.fedoraproject.org/message/7MKE4XWRXTH32757H7QJU4ACS67DYDCR",
+            "https://lists.fedoraproject.org/archives/list/package-announce@lists.fedoraproject.org/message/7MKE4XWRXTH32757H7QJU4ACS67DYDCR/",
+            "https://lists.fedoraproject.org/archives/list/package-announce@lists.fedoraproject.org/message/KSPAJ5Y45A4ZDION2KN5RDWLHK4XKY2J",
+            "https://lists.fedoraproject.org/archives/list/package-announce@lists.fedoraproject.org/message/KSPAJ5Y45A4ZDION2KN5RDWLHK4XKY2J/",
+            "https://nvd.nist.gov/vuln/detail/CVE-2022-41854",
+            "https://security.netapp.com/advisory/ntap-20240315-0009",
+            "https://security.netapp.com/advisory/ntap-20240315-0009/",
+            "https://security.netapp.com/advisory/ntap-20240621-0006",
+            "https://security.netapp.com/advisory/ntap-20240621-0006/",
+            "https://www.cve.org/CVERecord?id=CVE-2022-41854"
+          ],
+          "PublishedDate": "2022-11-11T13:15:11.003Z",
+          "LastModifiedDate": "2026-06-17T05:03:56.173Z"
+        }
+      ]
+    }
+  ]
+}
