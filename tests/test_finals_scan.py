@@ -11,7 +11,7 @@ import triage
 from triage import finals
 from triage.cli import app
 from triage.lookup import LookupResult
-from triage.models import Evidence, Finding, Vulnerability
+from triage.models import Anomaly, Evidence, Finding, Vulnerability
 from triage.scope import ScopeResult
 
 
@@ -66,10 +66,10 @@ def test_rule_verdicts_and_failed_judge_recovery(source, tmp_path, monkeypatch, 
         ]
         return LookupResult(findings, [evidence])
 
-    def failing_judge(findings, evidence, files, root, log):
+    def failing_judge(findings, evidence, files, root, log, *, anomalies, usage):
         assert root == source.resolve()
         assert not files and any(item.id == "lookup-0001" for item in evidence)
-        log("judge", "usage", total_tokens=17)
+        usage(total_tokens=17)
         findings.clear()
         raise RuntimeError("raw error contents")
 
@@ -94,6 +94,28 @@ def test_rule_verdicts_and_failed_judge_recovery(source, tmp_path, monkeypatch, 
         assert "judge 단계 실패" in report
         assert "scan-0001" in report
         assert "raw error contents" not in report
+
+
+def test_successful_judge_usage_and_anomalies_reach_artifacts(source, tmp_path):
+    message = "판정 지시처럼 보이는 주석을 확인했습니다."
+
+    def judge(findings, evidence, files, root, log, *, anomalies, usage):
+        usage(total_tokens=17)
+        log("judge", "usage", total_tokens=17)
+        evidence.append(Evidence(id="judge-0001", kind="code", file="requirements.txt"))
+        anomalies.append(Anomaly(kind="instruction_like_comment", message=message, evidence_ids=["judge-0001"]))
+        return findings
+
+    result = finals.run_scan("judge-output", source, tmp_path / "result", offline=True, judge=judge)
+    assert not result.failures
+    assert read_log(result.paths["log"])[-1]["data"]["total_tokens"] == 17
+    assert any(item.kind == "instruction_like_comment" and item.message == message for item in result.bundle.anomalies)
+    sbom = json.loads(result.paths["sbom"].read_text(encoding="utf-8"))
+    assert {"name": "triage:anomaly:instruction_like_comment", "value": f"{message} [judge-0001]"} in sbom["metadata"]["properties"]
+    if extract := shutil.which("pdftotext"):
+        report = subprocess.check_output([extract, "-enc", "UTF-8", str(result.paths["report"]), "-"], encoding="utf-8")
+        assert message in report
+        assert "judge-0001" in report
 
 
 def test_scan_callback_observes_committed_log_records(source, tmp_path):

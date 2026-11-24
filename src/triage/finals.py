@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from time import perf_counter
+from typing import Protocol
 
 from .collect import collect
 from .lookup import lookup
@@ -16,9 +17,14 @@ from .output import RunLog, render_pdf, write_cyclonedx
 from .scope import apply_scope
 
 
-Judge = Callable[[list[Finding], list[Evidence], list[SourceFileScope], Path, Callable[..., None]],
-                 list[Finding] | None]
 STATES = ("affected", "not_affected", "undetermined")
+
+
+class Judge(Protocol):
+    def __call__(
+        self, findings: list[Finding], evidence: list[Evidence], files: list[SourceFileScope], root: Path,
+        log: Callable[..., None], /, *, anomalies: list[Anomaly], usage: Callable[..., None],
+    ) -> list[Finding] | None: ...
 
 
 @dataclass
@@ -68,7 +74,7 @@ def run_scan(
     label: str, root: Path, out_dir: Path, offline: bool = False, run_no: int = 1, judge: Judge | None = None,
     on_event: Callable[[dict], None] | None = None,
 ) -> ScanResult:
-    """점검 결과를 반환한다. 판정기는 모델 호출마다 usage 이벤트를 남길 수 있다."""
+    """점검 결과를 반환하고 로그를 저장한 직후 on_event로 전달한다."""
     if not label.strip() or any(char in '<>:"/\\|?*' or ord(char) < 32 for char in label):
         raise ValueError("라벨은 파일 이름에 사용할 수 있는 비어 있지 않은 문자열이어야 합니다.")
     if run_no < 1:
@@ -88,8 +94,6 @@ def run_scan(
         nonlocal lookup_misses
         if stage == "lookup" and (event == "cache_miss" or event == "request_unavailable"):
             lookup_misses += 1
-        if event == "usage" or event.endswith((".usage", "_usage")):
-            run_log.add_usage(data.get("usage", data), reasoning_tokens=data.get("reasoning_tokens"))
         if event in {"start", "end"}:
             event = f"detail.{event}"
         run_log.emit(stage, event, **data)
@@ -147,7 +151,8 @@ def run_scan(
                 # 오류가 발생하면 조회 결과를 보존하고 규칙으로 다시 판정한다.
                 inputs = bundle.model_copy(deep=True)
                 try:
-                    judged = judge(inputs.findings, inputs.evidence, inputs.files, root, log)
+                    judged = judge(inputs.findings, inputs.evidence, inputs.files, root, log,
+                                   anomalies=inputs.anomalies, usage=run_log.add_usage)
                 except Exception as error:
                     record_failure("judge", error)
                     bundle.findings = _prejudge(bundle.findings)
@@ -155,6 +160,7 @@ def run_scan(
                 else:
                     bundle.findings = inputs.findings if judged is None else judged
                     bundle.evidence = inputs.evidence
+                    bundle.anomalies = inputs.anomalies
             for finding in bundle.findings:
                 if verdict := finding.verdict:
                     run_log.emit("judge", "decision", finding_key=finding.key, state=verdict.state,
