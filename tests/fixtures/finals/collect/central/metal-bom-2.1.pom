@@ -1,0 +1,7 @@
+<project>
+  <groupId>org.fixture</groupId><artifactId>metal-bom</artifactId><version>2.1</version>
+  <dependencyManagement><dependencies>
+    <dependency><groupId>org.fixture</groupId><artifactId>sleeve</artifactId><version>1.8.0</version></dependency>
+    <dependency><groupId>org.fixture</groupId><artifactId>lathe</artifactId><version>3.2.0</version></dependency>
+  </dependencies></dependencyManagement>
+</project>

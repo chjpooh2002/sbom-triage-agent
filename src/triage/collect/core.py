@@ -5,6 +5,7 @@ import json
 import os
 import re
 from bisect import bisect_right
+from collections import defaultdict
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -12,6 +13,8 @@ from typing import NamedTuple
 
 from triage.ingest.common import component_id, make_purl
 from triage.models import Anomaly, Component, Evidence
+
+ANOMALY_EXAMPLE_LIMIT = 3
 
 
 class CollectResult(NamedTuple):
@@ -128,6 +131,22 @@ class Collection:
 
     def anomaly(self, kind, message, *ids):
         self.result.anomalies.append(Anomaly(kind=kind, message=message, evidence_ids=self.reference_ids(ids)))
+
+    def summarize_anomalies(self):
+        by_kind = defaultdict(list)
+        for anomaly in self.result.anomalies:
+            by_kind[anomaly.kind].append(anomaly)
+
+        summary = []
+        for kind, rows in by_kind.items():
+            if len(rows) == 1:
+                summary.append(rows[0])
+                continue
+            examples = list(dict.fromkeys(row.message for row in rows))[:ANOMALY_EXAMPLE_LIMIT]
+            refs = list(dict.fromkeys(ref for row in rows for ref in row.evidence_ids))
+            summary.append(Anomaly(kind=kind, message=f"총 {len(rows)}건 · 대표 사례 " + " / ".join(examples),
+                                   evidence_ids=refs))
+        self.result.anomalies[:] = summary
 
     def add(self, *, name, ecosystem, version="", group="", location="", evidence_ids, sources, **fields):
         evidence_ids = self.reference_ids(evidence_ids)

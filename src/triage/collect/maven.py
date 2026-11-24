@@ -261,7 +261,8 @@ def management(repo, chain, active):
                     imported = repo.bom_management[bom.doc.file]
                     for coord, managed in imported.items():
                         source = managed.version
-                        value = Value(source.text, (ref, *version.refs, *source.refs), source.override)
+                        value = Value(source.text, (ref, *version.refs, *source.refs),
+                                      version.override or source.override)
                         imports.setdefault(coord, Managed(value, managed.scope, managed.optional, managed.exclusions))
                 elif bom:
                     ctx.anomaly("pom_cycle", "BOM 순환 참조입니다.", ref)
