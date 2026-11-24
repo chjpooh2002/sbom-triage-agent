@@ -13,7 +13,7 @@ from triage.output import RunLog, render_pdf, validate_cyclonedx, write_cycloned
 @pytest.fixture
 def bundle():
     bundle = TriageBundle.model_validate_json(
-        Path(__file__).with_name("output_bundle.json").read_text(encoding="utf-8")
+        (Path(__file__).parent / "fixtures" / "finals" / "output_bundle.json").read_text(encoding="utf-8")
     )
     for index, state in enumerate(("affected", "not_affected", "undetermined")):
         component = bundle.components[1 if state == "not_affected" else 0]
@@ -24,11 +24,14 @@ def bundle():
                 references=["https://example.com/advisories/fixture", "javascript:bad"],
                 affected_ranges=["<1.2"], fixed_versions=["1.2"],
             ),
+            hints={"evidence_ids": ["lookup-0001"]},
             verdict=Verdict(
                 state=state,
                 justification="code_not_reachable" if state == "not_affected" else "",
                 rationale_ko="설정에서 실행 조건을 확인했습니다.",
-                item_results=[{"item_key": "config", "status": "met", "evidence_ids": ["evidence-0001"]}],
+                item_results=[{
+                    "item_key": "config", "status": "met", "evidence_ids": ["evidence-0001", "lookup-0002"],
+                }],
                 work_request={
                     "to_team": "운영팀", "title": "배포 범위 확인",
                     "body": "운영 설정을 확인해 주세요. password=sensitive-fixture",
@@ -137,7 +140,7 @@ def test_runlog_explains_unavailable_tokens(usage, tmp_path):
     assert summary["data"]["total_tokens_reason"]
 
 
-def _pdf_text(bundle, out):
+def _pdf_text(bundle, out, **meta):
     pdftotext = shutil.which("pdftotext")
     if not pdftotext:
         pytest.skip("pdftotext가 설치되어 있지 않습니다.")
@@ -145,13 +148,17 @@ def _pdf_text(bundle, out):
         import weasyprint  # noqa: F401
     except OSError as error:
         pytest.skip(f"WeasyPrint 네이티브 라이브러리를 불러올 수 없습니다. {error}")
-    assert [item.id for item in render_pdf(bundle, {"name": "한글 예제 프로젝트"}, out)] == ["pdf-0001"]
-    text = subprocess.check_output([pdftotext, "-enc", "UTF-8", str(out), "-"], encoding="utf-8")
-    return " ".join(text.split())
+    evidence = render_pdf(bundle, {"name": "한글 예제 프로젝트", **meta}, out)
+    assert [item.id for item in evidence] == ["pdf-0001"]
+    return subprocess.check_output([pdftotext, "-enc", "UTF-8", str(out), "-"], encoding="utf-8")
 
 
 def test_pdf_extracts_korean_report_and_work_request(bundle, tmp_path):
-    text = _pdf_text(bundle, tmp_path / "report.pdf")
+    extracted = _pdf_text(bundle, tmp_path / "report.pdf", lookup_sources=[
+        {"name": "lookup.example.com", "retrieved_at": "2026-01-03T12:00:00Z"},
+    ])
+    assert 1 <= extracted.count("\f") <= 5
+    text = " ".join(extracted.split())
     for phrase in (
         "취약점 조치 보고서", "한글 예제 프로젝트", "영향 있음", "영향 없음", "판단 유보",
         "조치 항목 및 우선순위", "검증 계획", "업무 요청 초안", "받는 팀 운영팀",
@@ -160,12 +167,48 @@ def test_pdf_extracts_korean_report_and_work_request(bundle, tmp_path):
         assert phrase in text
     assert "sensitive-fixture" not in text
     assert "javascript:bad" not in text
+    main, _, appendix = text.partition("부록 · 판정 근거 목록")
+    assert "app-settings.json:3-5" in main
+    assert "fixture_mode = true fixture_checks = true" in main
+    assert "fixture_extra" not in text
+    assert "requirements-fixture.txt:1-2" in main
+    assert "https://lookup.example.com/fixture-note" in main
+    assert "app-settings.json:3-5 [evidence-0001]" in appendix
+    assert "https://lookup.example.com/fixture-note [lookup-0002]" in appendix
+    for unrelated in ("collect-0001", "collect-0002", "scope-0001", "lookup-0001", "pdf-0001"):
+        assert unrelated not in appendix
+    assert "unreferenced.fixture" not in text
+
+    summary = main[main.index("먼저 고칠 것 3개"):main.index("입력 이상")]
+    assert "FIXTURE-0 · fixture-parser · P1 · 목표 버전 1.2" in summary
+    assert "FIXTURE-1" not in summary
+    assert "FIXTURE-2" not in summary
+    assert main.count("lock_mismatch · 2건") == 1
+    assert "missing_metadata · 1건" in main
+    assert "점검 대상·범위" in main
+    assert "생태계 pypi · 구성요소 2개" in main
+    assert "배포 포함" in main
+    assert "배포 제외" in main
+    assert "배포 여부 미확인" in main
+    file_scope = main[main.index("배포 파일 분류"):main.index("조회한 데이터 출처와 시점")]
+    file_scope = file_scope.replace("• ", "").replace("◦ ", "")
+    for phrase in (
+        "test checks/entry_check.py · 테스트 전용입니다.",
+        "legacy archive/entry.py · 보관용 파일입니다.",
+        "script tools/local.py · 로컬 도구입니다.",
+        "generated generated/model.py · 빌드 산출물에 포함됩니다.",
+        "vendored_bundle third_party/fixture.min.js · 실제 배포 파일을 확인해야 합니다.",
+        "Containerfile.fixture:8",
+    ):
+        assert phrase in file_scope
+    for phrase in ("lookup.example.com", "2026-01-03T12:00:00Z", "2026-01-02"):
+        assert phrase in main
 
 
 @pytest.mark.parametrize("only_not_affected", [False, True])
 def test_pdf_explicitly_describes_no_action_states(bundle, only_not_affected, tmp_path):
     bundle.findings = [bundle.findings[1]] if only_not_affected else []
-    text = _pdf_text(bundle, tmp_path / "report.pdf")
+    text = " ".join(_pdf_text(bundle, tmp_path / "report.pdf").split())
     assert "이번 점검에서 확인된 조치 대상이 없습니다." in text
     expected = "모두 영향 없음으로 판정했습니다." if only_not_affected else "취약점 후보가 0건입니다."
     assert expected in text
