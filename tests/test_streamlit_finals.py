@@ -186,7 +186,7 @@ def test_saved_result_reopens_in_new_session_without_scan(ui, monkeypatch, tmp_p
     monkeypatch.setattr(ui, "load_scan", lambda: None)
     fresh = run_app()
     picker = fresh.selectbox[0]
-    assert picker.options[1:] == [f"테스트 서비스 · {directory.name}", "이전 서비스 · 20000101-000000"]
+    assert picker.options[1:] == [ui.history_label(directory), "이전 서비스 · 2000-01-01 00:00:00"]
     picker.select(directory).run()
     assert not fresh.exception and not fresh.error
     assert rendered == [(bundle, downloads, failures, command)] * 2
@@ -209,6 +209,32 @@ def test_saved_result_rejects_outside_paths(ui, tmp_path):
     assert not app.exception
     assert app.warning.values == ["저장된 점검 결과를 읽을 수 없습니다."]
     assert not app.get("download_button")
+
+
+def test_restored_board_filter_and_pdf_refresh(ui, monkeypatch):
+    from triage.output.report_pdf import saved
+
+    bundle = TriageBundle.model_validate_json((SOURCE.parent / "action_bundle.json").read_bytes())
+    directory = ui.save_result("저장 서비스", bundle, {"report": ("old.pdf", b"stored-pdf")}, {}, "")
+    calls = []
+
+    def render(source, out):
+        calls.append(source)
+        out.write_bytes(b"%PDF-test")
+        log = out.with_suffix(".report.jsonl")
+        log.write_text('{"stage":"report"}\n', encoding="utf-8")
+        return log
+
+    monkeypatch.setattr(saved, "render_saved_report", render)
+    page = run_app()
+    page.selectbox[0].select(directory).run()
+    page.segmented_control[0].set_value("확인 필요").run()
+    board = next(element.value for element in page.html if 'class="action-board"' in element.value)
+    assert "바로 고칠 것" not in board and 'href="#action-2"' in board
+    page.button(key="rerender_saved").click().run()
+    assert not page.exception and calls == [directory / "bundle.json"]
+    assert any(b.label == "보고서 재생성 기록" for b in page.get("download_button"))
+    assert (directory / "old.pdf").read_bytes() == b"stored-pdf"
 
 
 def test_save_failure_keeps_current_result(ui, monkeypatch, tmp_path):
@@ -267,7 +293,7 @@ def test_real_offline_scan_fills_expected_downloads(monkeypatch):
     submit_server_path(app, SOURCE, offline=True)
     assert not app.exception
     assert not app.error
-    assert len(app.get("download_button")) == 4  # 변경안·PDF(지금 할 일) + SBOM·실행 기록(기록용 파일)
+    assert len(app.get("download_button")) == 3  # 빈 변경안은 적용을 안내하지 않는다.
     _, downloads, failures = app.session_state["finals_result"]
     assert not failures
     assert downloads["patch"][0].endswith(".patch")
@@ -314,7 +340,7 @@ def test_action_cards_search_details_and_threaded_progress(ui, monkeypatch, tmp_
     # 한눈에 보이도록 1순위 카드만 펼치고 나머지는 조치 보드에서 고른다.
     assert len(cards) == 3 and [x.proto.expanded for x in cards] == [True, False, False]
     assert any(r"근거로 쓰지 않았습니다 · container/Dockerfile\:2" in w.value for w in app.warning)
-    assert any("triage scan" in x.value and str(tmp_path) in x.value for x in app.code)
+    assert any("triage scan" in x.value and ui.scan_command("테스트 서비스", str(tmp_path)) == x.value for x in app.code)
     hit = next(f for f in bundle.findings if f.vulnerability.aliases)
     app.text_input[2].set_value(hit.vulnerability.aliases[0].lower()).run()
     assert not app.exception
@@ -381,7 +407,7 @@ def test_action_card_fix_metadata(ui, monkeypatch, tmp_path, status):
             assert f"## {action.team or '담당 팀 미정'}" in text and action.work_request.title in text
     assert "지금 할 일" in app.subheader.values
     assert any("다시 점검" in value for value in app.markdown.values)
-    assert any("git apply" in value for value in app.markdown.values) == bool(status)
+    assert any(code.value.startswith("git apply ") for code in app.code) == bool(status)
     assert any(code.value.startswith("uv run triage scan") and code.value.endswith("out/recheck")
                for code in app.code)
     if status is None:

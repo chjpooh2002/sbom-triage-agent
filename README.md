@@ -6,6 +6,17 @@ CISA KEV·EPSS·CVSS·외부 노출·자산 중요도로 **결정적 우선순�
 
 작업 규칙은 [AGENTS.md](AGENTS.md)(Claude Code·Codex 공용)에 있다.
 
+## 소스 점검과 PDF 재출력
+
+`uv run streamlit run app/streamlit_app.py`로 웹을 연다. 소스 ZIP이나 서버 폴더를 점검하면 조치 보드에서 구성요소별 수정 위치와 담당 부서를 확인할 수 있다. 이전 점검은 **저장된 결과 열기**에서 선택한다.
+
+```bash
+uv run triage scan 서비스 ./source ./out
+uv run triage report ./out/bundle-서비스.json ./out/공유용.pdf
+```
+
+`report`는 저장된 판정과 근거를 사용해 PDF와 같은 폴더에 `공유용.report.jsonl`을 기록한다. 기존 웹 저장 폴더의 `bundle.json`도 입력할 수 있다. 첫 장에서 변경안과 재점검 명령을 복사하고, 부록에서 근거 번호를 눌러 원래 근거 ID와 위치를 확인한다.
+
 ## 흐름
 
 ```

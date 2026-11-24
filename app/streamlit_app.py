@@ -1,12 +1,11 @@
 """시연 화면. 실행: uv run streamlit run app/streamlit_app.py"""
 from __future__ import annotations
 
-import os
+from html import escape
 import re
-import shlex
 import sys
 import tempfile
-from collections import Counter, defaultdict
+from collections import defaultdict
 from collections.abc import Mapping
 from concurrent.futures import ThreadPoolExecutor, wait
 from datetime import date, datetime, timedelta
@@ -22,6 +21,9 @@ from pydantic import BaseModel
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
+from triage.action_view import (  # noqa: E402
+    action_board, action_summary, check_summary, recheck_command, scan_command, shell_arg, team_draft, team_requests,
+)
 from triage.actions import build_actions  # noqa: E402
 from triage.models import TriageBundle  # noqa: E402
 from triage.output._common import file_location, finding_state  # noqa: E402
@@ -60,38 +62,12 @@ DOWNLOADS = {
     "log": ("실행 기록 (JSONL)", "application/jsonl"),
 }
 WEB_RESULTS = ROOT / "out" / "web"
-STYLE = """
-<style>
-.block-container {max-width: 1320px; padding-top: 1.2rem;}
-header[data-testid="stHeader"] {height: 0; min-height: 0; background: transparent;}
-h1 {font-size: 1.75rem !important; padding-top: 0.4rem !important;}
-[data-testid="stMetric"] {background: #f7f8fa; border: 1px solid #e3e6eb; border-radius: 14px; padding: 14px 20px;}
-[data-testid="stMetricLabel"] p {font-size: 0.95rem; font-weight: 600; color: #4a4f57;}
-[data-testid="stMetricValue"] {font-size: 2.6rem; font-weight: 750;}
-.st-key-hero {border-left: 7px solid #d93025; background: #fff4f2; border-radius: 12px; padding: 18px 24px;}
-.st-key-hero h3 {margin: 0 0 4px 0; padding: 0;}
-.st-key-dev_panel, .st-key-team_panel {background: #fbfbfc; border: 1px solid #e3e6eb; border-radius: 14px; padding: 18px 22px;}
-.st-key-dev_panel {border-top: 5px solid #d93025;}
-.st-key-team_panel {border-top: 5px solid #1a56c4;}
-.tri-badges {margin: 2px 0 10px;}
-.tri-badge {display: inline-block; padding: 3px 11px; border-radius: 999px; font-size: 0.82rem; font-weight: 650; margin: 0 6px 4px 0;}
-.b-red {background: #fde7e4; color: #a8221a;} .b-amber {background: #fff2cc; color: #7a5200;}
-.b-blue {background: #e6efff; color: #1747a6;} .b-gray {background: #eef0f3; color: #464b53;}
-.b-green {background: #e3f5e8; color: #1a6b31;}
-.tri-section {font-size: 0.8rem; font-weight: 700; letter-spacing: .04em; color: #7a808a; margin: 6px 0 2px;}
-[data-testid="stExpander"] details {border-radius: 12px;}
-[data-testid="stExpander"] summary p {font-size: 1.02rem; font-weight: 650;}
-</style>
-"""
-SEVERITY_LABELS = {"critical": "치명", "high": "높음", "medium": "중간", "low": "낮음"}
-SEVERITY_ORDER = ["critical", "high", "medium", "low"]
+STYLE = Path(__file__).with_name("finals.css").read_text(encoding="utf-8")
 
 
 def badges(*items) -> str:
     """(문구, 색) 묶음을 배지 HTML로. 문구는 HTML로 이스케이프한다."""
-    import html
-
-    spans = "".join(f'<span class="tri-badge b-{color}">{html.escape(text)}</span>' for text, color in items if text)
+    spans = "".join(f'<span class="tri-badge b-{color}">{escape(text)}</span>' for text, color in items if text)
     return '<div class="tri-badges">' + spans + "</div>"
 STAMP_FORMAT = "%Y%m%d-%H%M%S"
 
@@ -156,6 +132,16 @@ def saved_results() -> list[Path]:
                     and run_dir.resolve() == run_dir.absolute() and run_dir.is_dir()):
                 runs.append(run_dir)
     return sorted(runs, key=lambda path: (path.name, path.parent.name), reverse=True)
+
+
+def history_label(path):
+    if path is None:
+        return "새 점검"
+    try:
+        stamp = datetime.strptime(path.name, STAMP_FORMAT).strftime("%Y-%m-%d %H:%M:%S")
+    except ValueError:
+        stamp = path.name
+    return f"{path.parent.name} · {stamp}"
 
 
 def load_result(directory: Path):
@@ -358,104 +344,72 @@ def reason_text(finding):
     return ((verdict.plain_ko or verdict.rationale_ko) if verdict else "") or finding.status_note or "판정 설명이 없습니다."
 
 
-def scan_command(label: str, source: str, offline: bool = False) -> str:
-    """고친 뒤 다시 점검하는 명령. PDF 보고서의 '다시 실행' 명령과 같은 형식이다."""
-    def quote(value):
-        if os.name == "nt":
-            return value if re.fullmatch(r"[\w./-]+", value) else "'" + value.replace("'", "''") + "'"
-        return shlex.quote(value)
-
-    options = ["--offline"] if offline else []
-    return " ".join(["uv run triage scan", *options, "--", *map(quote, (label, source or "./source", "out/recheck"))])
-
-
-LEGACY_COMMAND = re.compile(r"^triage scan (?P<args>.+) (?:'\./out'|\./out)$")
-
-
-def recheck_command(command: str) -> str:
-    # 예전 저장본은 'triage scan 라벨 경로 ./out' 형식이라 결과 폴더를 덮어쓴다.
-    if match := LEGACY_COMMAND.match(command):
-        return f"uv run triage scan -- {match['args']} out/recheck"
-    return command
-
-
-def team_requests(actions):
-    teams = defaultdict(list)
-    for index, action in enumerate(actions, 1):
-        if action.work_request:
-            teams[action.team or "담당 팀 미정"].append((index, action))
-    return teams
-
-
-def team_draft(label: str, team: str, items) -> str:
-    """받는 팀에 바로 보낼 수 있는 메일 초안."""
-    lines = [f"제목: [{label} 취약점 점검] 영향 확인 요청 {len(items)}건", "",
-             f"{team} 담당자님, 안녕하세요.",
-             f"{label} 서비스의 오픈소스 취약점을 점검했는데, 아래 항목은 소스 코드만으로는 영향 여부를 확정할 수 없어 "
-             "운영 정보 확인을 부탁드립니다. 답변에 따라 바로 업그레이드하거나 조치 불필요로 기록하겠습니다.", ""]
-    for number, (index, action) in enumerate(items, 1):
-        request = action.work_request
-        lines += [f"{number}. {request.title} (할 일 {index} · {action.component})", request.body]
-        lines += [f"   - {branch}" for branch in request.branches]
-        lines.append("")
-    lines.append("확인 후 회신 부탁드립니다. 감사합니다.")
-    return "\n".join(lines)
-
-
 def work_requests_text(label: str, actions) -> str:
     """확인 필요 항목의 업무 요청서를 받는 팀별로 묶은 문서."""
-    teams = defaultdict(list)
-    for index, action in enumerate(actions, 1):
-        if action.work_request:
-            teams[action.team or "담당 팀 미정"].append((index, action))
+    teams = team_requests(actions)
     lines = [f"# {label} 확인 요청서", "",
              "취약점 점검에서 코드만으로 영향 여부를 확정하지 못한 항목입니다. 답을 받아 판정을 확정합니다.", ""]
     for team, items in teams.items():
-        lines += [f"## {team} ({len(items)}건)", ""]
-        for index, action in items:
-            request = action.work_request
-            lines += [f"### 할 일 {index}. {request.title}", "", request.body, ""]
-            lines += [f"- {branch}" for branch in request.branches]
-            lines.append("")
+        lines += [f"## {team} ({len(items)}건)", "", team_draft(label, team, items), ""]
     return "\n".join(lines)
 
 
-def action_board(actions, findings, evidence):
-    """조치를 고르기 위해 먼저 보는 값을 한 줄씩 모은 표."""
-    rows = []
-    for index, action in enumerate(actions, 1):
-        members = [findings[key] for key in action.findings if key in findings]
-        levels = [f.vulnerability.severity.lower() for f in members]
-        top = next((level for level in SEVERITY_ORDER if level in levels), "")
-        where = next((file_location(evidence[r]) for r in action.evidence_ids
-                      if r in evidence and evidence[r].file), "")
-        affected, pending = action.counts["affected"], action.counts["undetermined"]
-        if affected and action.work_request:
-            todo = "변경안 적용 + 확인 요청"
-        elif affected:
-            todo = "변경안 적용"
-        elif action.work_request:
-            todo = "확인 요청 보내기"
-        else:
-            todo = "영향 조건 확인"
-        rows.append({
-            "순서": index,
-            "구분": "바로 고칠 것" if affected else "확인 필요",
-            "구성요소": action.component,
-            "목표": action.target or "확인 후 결정",
-            "영향 있음": affected,
-            "확인 필요": pending,
-            "최고 심각도": SEVERITY_LABELS.get(top, "미상"),
-            "근거 위치": where,
-            "연락할 부서": action.team or ("개발자 직접" if affected else "-"),
-            "다음 행동": todo,
-        })
-    return rows
+def board_html(rows):
+    """같은 표의 열 이름을 좁은 화면에서는 각 값 옆에 표시한다."""
+    headers = "".join(f"<th scope='col'>{escape(k)}</th>" for k in rows[0])
+    body = []
+    for row in rows:
+        cells = []
+        number = row["순서"]
+        for key, raw in row.items():
+            value = escape(str(raw))
+            if key == "구성요소":
+                value = f'<a href="#action-{number}" target="_self">{value}</a>'
+            elif key == "구분":
+                tone = "b-red" if row["영향 있음"] else "b-amber"
+                value = f'<span class="tri-badge {tone}">{value}</span>'
+            cells.append(f'<td data-label="{escape(key)}">{value}</td>')
+        body.append("<tr>" + "".join(cells) + "</tr>")
+    return ('<table class="action-board" aria-label="조치 보드"><thead><tr>' + headers
+            + "</tr></thead><tbody>" + "".join(body) + "</tbody></table>")
+
+
+def show_board(rows):
+    st.subheader("조치 보드", anchor="board")
+    options = ["전체", *dict.fromkeys(r["구분"] for r in rows)]
+    selected = "전체"
+    if len(options) > 2:
+        selected = st.segmented_control("조치 구분", options, default="전체",
+                                        key="board_filter", label_visibility="collapsed") or "전체"
+    visible = [r for r in rows if selected == "전체" or r["구분"] == selected]
+    if selected != "전체":
+        st.caption(f"전체 조치 {len(rows)}개 중 {len(visible)}개 표시")
+    st.html(board_html(visible))
+
+
+def saved_pdf_controls(panel, directory, downloads):
+    from triage.output.report_pdf.saved import render_saved_report
+
+    if panel.button("현재 양식으로 PDF 만들기", key="rerender_saved", help="저장된 판정과 근거로 다시 그립니다."):
+        try:
+            with tempfile.TemporaryDirectory() as scratch, panel, st.spinner("보고서 생성 중…"):
+                out = Path(scratch) / "report.pdf"
+                run_log = render_saved_report(checked_child(directory, "bundle.json"), out)
+                st.session_state["refreshed_pdf"] = (str(directory), out.read_bytes(), run_log.read_bytes())
+        except (ValueError, OSError):
+            panel.error("PDF를 만들 수 없습니다. 저장 묶음과 인쇄 엔진을 확인해 주세요.")
+    result = st.session_state.get("refreshed_pdf")
+    if result and result[0] == str(directory):
+        downloads["report"] = (f"report-{directory.parent.name}.pdf", result[1])
+        panel.success("저장된 판정으로 현재 양식의 PDF를 만들었습니다.")
+        panel.download_button("보고서 재생성 기록", result[2], "report.jsonl", "application/jsonl")
+        return True
+    return False
 
 
 def show_next_steps(label, actions, downloads, fix_check, command) -> None:
     """분석 결과 바로 다음에 무엇을 할지, 단계마다 필요한 파일·명령과 함께 보여 준다."""
-    st.subheader("지금 할 일")
+    st.subheader("지금 할 일", anchor="next-steps")
     teams = team_requests(actions)
     if teams:
         left, right = st.columns([1, 1], gap="large")
@@ -470,33 +424,35 @@ def show_next_steps(label, actions, downloads, fix_check, command) -> None:
 
     dev = left.container(key="dev_panel")
     dev.markdown('<div class="tri-section">개발자가 할 일</div>', unsafe_allow_html=True)
-    if "patch" in downloads:
+    if downloads.get("patch", ("", b""))[1]:
         name, data = downloads["patch"]
-        plain = name.replace("`", "")
         step(dev, "변경안 적용")
-        dev.markdown(f"변경안을 받아 소스 폴더에서 `git apply {plain}`로 적용하고 이미지를 다시 빌드합니다.")
+        dev.markdown("변경안을 받아 소스 폴더에서 다음 명령으로 적용합니다.")
+        dev.code("git apply " + shell_arg(name), language=None, wrap_lines=True)
         dev.download_button(f"{DOWNLOADS['patch'][0]} 내려받기", data, name, DOWNLOADS["patch"][1],
                             key="finals_top_patch", type="primary")
-    elif actions:
+    elif any(a.counts["affected"] for a in actions):
         step(dev, "코드 수정")
         dev.markdown("아래 '바로 고칠 것' 카드의 '어떻게 고치나'대로 선언을 고치고 이미지를 다시 빌드합니다.")
     if actions:
         step(dev, "다시 점검")
-        if fix_check.get("status") == "ok":
-            before = fix_check.get("before_candidates") or len(fix_check["resolved"]) + len(fix_check["remaining"])
-            after = fix_check.get("after_candidates") or len(fix_check["remaining"]) + len(fix_check["new"])
-            dev.markdown(f"고친 소스로 아래 명령을 실행합니다. 변경안 기준 예상 결과: 후보 {before}건 → {after}건 "
-                         f"(해소 {len(fix_check['resolved'])} · 남음 {len(fix_check['remaining'])} · "
-                         f"새로 생김 {len(fix_check['new'])})")
-        else:
-            dev.markdown("고친 소스로 아래 명령을 실행해 해소 여부를 확인합니다.")
+        dev.markdown("고친 소스로 아래 명령을 실행합니다.")
+        dev.caption("변경안 기준 예상 결과 · " + md_escape(check_summary(fix_check)))
+        if "<점검할 소스 경로>" in command:
+            dev.caption("명령의 <점검할 소스 경로>에 수정한 프로젝트 폴더를 넣으세요.")
         dev.code(command, language=None, wrap_lines=True)
-    if "report" in downloads:
-        name, data = downloads["report"]
+    directory = st.session_state.get("finals_history")
+    if "report" in downloads or directory:
         step(dev, "결과 공유")
-        dev.markdown("판정 근거가 모두 담긴 보고서를 보안 담당자·팀장에게 공유합니다.")
-        dev.download_button(f"{DOWNLOADS['report'][0]} 내려받기", data, name, DOWNLOADS["report"][1],
-                            key="finals_top_report", type="secondary" if "patch" in downloads else "primary")
+        dev.markdown("판정 근거가 담긴 보고서를 보안 담당자·팀장에게 공유합니다.")
+        refreshed = False
+        if directory:
+            refreshed = saved_pdf_controls(dev, directory, downloads)
+        if "report" in downloads:
+            name, data = downloads["report"]
+            title = "점검 당시 PDF 내려받기" if directory and not refreshed else "PDF 보고서 내려받기"
+            dev.download_button(title, data, name, DOWNLOADS["report"][1], key="finals_top_report",
+                                type="secondary" if downloads.get("patch", ("", b""))[1] else "primary")
     if right is None:
         return
     panel = right.container(key="team_panel")
@@ -622,31 +578,16 @@ def show_card(action, index, expanded, findings, evidence, plans, checklists, co
 
 def show_results(bundle, downloads, failures, command=None) -> None:
     actions = build_actions(bundle)
-    counts = Counter(map(finding_state, bundle.findings))
     for anomaly in bundle.anomalies:
         if anomaly.kind == "judge_degraded":
             st.error(md_escape(Redactor().text(anomaly.message)))
-    metrics = [("오늘 할 일", len(actions)), ("영향 있음", counts["affected"]),
-               ("확인 필요", counts["undetermined"]), ("영향 없음", counts["not_affected"])]
-    # 한 화면에 결론과 숫자가 같이 보이도록 윗줄을 결론(왼쪽)과 지표 2×2(오른쪽)로 나눈다.
-    top_left, top_right = st.columns([3, 2], gap="large", vertical_alignment="center")
-    tiles = [*top_right.columns(2), *top_right.columns(2)]
-    for column, (label, value) in zip(tiles, metrics):
-        column.metric(label, value)
-
-    if counts["affected"]:
-        conclusion = f"먼저 고칠 것은 {md_escape(actions[0].component)}입니다."
-    elif actions:
-        conclusion = f"먼저 확인할 것은 {md_escape(actions[0].component)}의 영향 조건입니다."
-    elif bundle.findings:
-        conclusion = "모든 후보가 영향 없음으로 판정되어 먼저 확인할 것이 없습니다."
-    else:
-        conclusion = "취약점 후보가 없어 먼저 확인할 것은 이번 점검의 수집·조회 범위입니다."
+    conclusion, metrics = action_summary(actions, bundle.findings)
     evidence = {e.id: e for e in bundle.evidence}
     findings = {f.key: f for f in bundle.findings}
     fix_check = bundle.meta.get("fix_check", {})
-    hero = top_left.container(key="hero")
-    hero.markdown(f"### {conclusion}")
+    tone = "affected" if metrics["영향 있음"] else "pending" if actions else "neutral"
+    hero = st.container(key=f"decision_{tone}")
+    hero.markdown(f"### {md_escape(conclusion)}")
     if actions:
         first = actions[0]
         where = next((file_location(evidence[r]) for r in first.evidence_ids if r in evidence and evidence[r].file), "")
@@ -659,34 +600,18 @@ def show_results(bundle, downloads, failures, command=None) -> None:
             (f"변경안 적용 시 {solved}건 해소" if solved else "", "green"),
             (f"연락할 부서 {first.team}" if first.team else "", "blue"),
         ), unsafe_allow_html=True)
+    with st.container(key="summary_metrics"):
+        for column, (label, value) in zip(st.columns(4), metrics.items()):
+            column.metric(label, value)
     label = bundle.meta.get("label") or "서비스"
-    command = recheck_command(command or scan_command(label, ""))
+    command = recheck_command(command or "", label)
     if actions:
-        st.subheader("조치 보드")
-        st.caption("조치를 고를 때 보는 값: 영향 있음 여부 → 근거 위치 → 목표 버전 → 연락할 부서. 위에서부터 우선순위입니다.")
-        import pandas as pd
-
-        tone = {"바로 고칠 것": "background-color:#fde7e4;color:#a8221a;font-weight:650",
-                "확인 필요": "background-color:#fff2cc;color:#7a5200;font-weight:650"}
-        board = pd.DataFrame(action_board(actions, findings, evidence))
-        st.dataframe(
-            board.style.map(lambda value: tone.get(value, ""), subset=["구분"]),
-            hide_index=True, use_container_width=True, height=min(38 + 35 * len(board), 420),
-            column_config={
-                "순서": st.column_config.NumberColumn(width=48),
-                "구분": st.column_config.TextColumn(width=100),
-                "구성요소": st.column_config.TextColumn(width=150),
-                "목표": st.column_config.TextColumn(width=110),
-                "영향 있음": st.column_config.ProgressColumn(
-                    min_value=0, max_value=max(a.counts["affected"] for a in actions) or 1, format="%d건", width=110),
-                "확인 필요": st.column_config.NumberColumn(format="%d건", width=72),
-                "최고 심각도": st.column_config.TextColumn(width=80),
-                "근거 위치": st.column_config.TextColumn(width=170),
-                "연락할 부서": st.column_config.TextColumn(width=120),
-                "다음 행동": st.column_config.TextColumn(width=160),
-            },
-        )
+        st.markdown('<nav class="result-nav" aria-label="결과 바로가기">'
+                    '<a href="#board">조치 보드</a><a href="#next-steps">지금 할 일</a>'
+                    '<a href="#finding-search">취약점 찾기</a></nav>', unsafe_allow_html=True)
+        show_board(action_board(actions, findings, evidence))
     show_next_steps(label, actions, downloads, fix_check, command)
+    st.markdown('<div id="finding-search"></div>', unsafe_allow_html=True)
     query = st.text_input("특정 취약점·패키지 찾기", placeholder="CVE, GHSA 또는 패키지 이름").strip()
     if failures:
         st.warning("일부 단계 실패")
@@ -725,7 +650,7 @@ def show_results(bundle, downloads, failures, command=None) -> None:
     for f in bundle.findings:
         if finding_state(f) == "not_affected":
             unaffected[f.component.id].append(f)
-    with st.expander(f"영향 없음 {counts['not_affected']}건"):
+    with st.expander(f"영향 없음 {metrics['영향 없음']}건"):
         for members in unaffected.values():
             first = members[0]
             st.markdown(f"{md_escape(first.component.display)} · {len(members)}건 · "
@@ -740,19 +665,19 @@ def show_results(bundle, downloads, failures, command=None) -> None:
             st.download_button(label, data, name, mime, key=f"finals_download_{kind}")
         elif kind != "patch":
             st.caption(f"{label} 파일이 생성되지 않았습니다.")
-    st.caption("PDF 보고서와 변경안은 위 '지금 할 일'에서 내려받습니다.")
 
 
 def finals_screen() -> None:
-    st.title("소스 코드 보안 점검")
-    st.caption("소스에서 사용 중인 구성요소를 찾고, 서비스에 영향이 있는지 확인합니다.")
     try:
         history = saved_results()
     except (OSError, ValueError, RuntimeError):
         st.warning("저장된 점검 결과를 읽을 수 없습니다.")
         history = []
-    selected = st.selectbox("저장된 결과 열기", [None, *history], key="finals_history",
-                            format_func=lambda p: f"{p.parent.name} · {p.name}" if p else "새 점검")
+    with st.container(key="workspace_header"):
+        left, right = st.columns([3, 2], vertical_alignment="center")
+        left.title("소스 코드 보안 점검")
+        left.write("배포 코드의 취약점을 확인하고, 고칠 위치와 다음 행동을 찾습니다.")
+        selected = right.selectbox("저장된 결과 열기", [None, *history], key="finals_history", format_func=history_label)
     if selected is not None:
         try:
             restored = load_result(selected)
@@ -769,13 +694,18 @@ def finals_screen() -> None:
     if finals is None:
         st.error("점검 실행기를 찾을 수 없습니다")
         return
-    with st.form("finals_input"):
-        service = st.text_input("서비스 이름")
-        upload = st.file_uploader(
-            f"소스 코드 ZIP (최대 {ZIP_UPLOAD_MIB} MiB)", type=["zip"],
+    entry = (st.expander("새 소스 점검") if st.session_state.get("finals_result")
+             else st.container(key="source_entry"))
+    with entry.form("finals_input"):
+        st.subheader("새 소스 점검")
+        service = st.text_input("서비스 이름", placeholder="결과와 보고서를 식별할 이름")
+        archive_col, path_col = st.columns(2, gap="large")
+        upload = archive_col.file_uploader(
+            f"소스 코드 ZIP (최대 {ZIP_UPLOAD_MIB} MiB)", type=["zip"], key="finals_zip",
             max_upload_size=ZIP_UPLOAD_MIB,
         )
-        server_path = st.text_input("또는 서버의 소스 폴더 경로")
+        server_path = path_col.text_input("또는 서버의 소스 폴더 경로", placeholder="점검할 프로젝트 폴더")
+        path_col.caption("ZIP과 서버 폴더 중 한 가지를 선택하세요.")
         offline = st.checkbox("오프라인 실행 (저장된 조회 결과만 사용)", value=False)
         submitted = st.form_submit_button("점검 시작", type="primary")
 
@@ -994,7 +924,7 @@ def legacy_screen() -> None:
 
 def main() -> None:
     st.set_page_config(page_title="SW 공급망 스캐닝 에이전트", layout="wide")
-    st.markdown(STYLE, unsafe_allow_html=True)
+    st.html(f"<style>{STYLE}</style>")
     finals, legacy = st.tabs(["본선 소스 점검", "기존 스캔 결과 분석"])
     with finals:
         finals_screen()
