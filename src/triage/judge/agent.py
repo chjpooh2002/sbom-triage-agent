@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import re
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
@@ -217,6 +218,25 @@ class _Run:
         return out
 
 
+class _Progress:
+    """후보 판정이 하나 끝날 때마다 ``judge``/``progress``(done, total). 화면 진행 표시용(C4).
+
+    모델 판정은 작업 스레드에서 끝나므로 카운터를 잠금으로 보호하고, 사건도 잠금 안에서 남겨
+    done 이 로그에 1, 2, 3 … 순서로 기록되게 한다. 잠금 순서는 항상 이 잠금 → 실행 로그 잠금이다.
+    실행 로그의 on_event 콜백은 로그 잠금 안에서 불리므로(콜백에서 로그를 쓰면 멈춤) 진행 사건은
+    콜백이 아니라 여기서 직접 남기고, 콜백 경로에서는 이 객체를 부르지 않는다.
+    """
+
+    def __init__(self, total: int, emit):
+        self.total, self.emit, self.done = total, emit, 0
+        self._lock = threading.Lock()
+
+    def tick(self) -> None:
+        with self._lock:
+            self.done += 1
+            self.emit("progress", done=self.done, total=self.total)
+
+
 def _publish(items: list[Evidence], store: EvidenceStore, seen: dict[tuple, str], out: list[Evidence]) -> dict[str, str]:
     """후보 전용 근거를 실행 저장소로 옮기며 ID를 다시 매긴다. 같은 내용은 같은 ID로 합친다."""
     mapping: dict[str, str] = {}
@@ -281,6 +301,10 @@ def judge_all(findings: list[Finding], evidence: list[Evidence], files: list[Sou
          model=client.model if client else "", escalate_model=escalate_client.model if escalate_client else "",
          switches={"judge": s.judge, "verify": s.verify, "escalate": s.escalate},
          cache_mode="on" if s.llm_cache else "off", workers=s.workers)
+    # 규칙으로 바로 정해진 건도 done 에 넣어 마지막 progress 의 done 이 total 과 같게 한다
+    progress = _Progress(len(findings), emit)
+    for _ in results:
+        progress.tick()
 
     new_evidence: list[Evidence] = []
     found: list[Anomaly] = []
@@ -289,8 +313,15 @@ def judge_all(findings: list[Finding], evidence: list[Evidence], files: list[Sou
         graph, import_ev = build_import_graph(root, files, store=store)
         base = [*{e.id: e for e in evidence}.values(), *import_ev]
         run = _Run(root, files, base, graph, s, client, escalate_client, log)
+
+        def judge_one(f: Finding):
+            try:
+                return run.judge(f)
+            finally:
+                progress.tick()   # 작업 스레드에서 판정 한 건이 끝날 때마다
+
         with ThreadPoolExecutor(max_workers=max(1, s.workers)) as pool:
-            jobs = {i: pool.submit(run.judge, findings[i]) for i in pending}
+            jobs = {i: pool.submit(judge_one, findings[i]) for i in pending}
         seen = {(e.kind, e.file, e.line_start, e.line_end, e.snippet, e.url, e.command, e.note): e.id for e in base}
         for i in pending:
             verdict, ws, local, fix = jobs[i].result()

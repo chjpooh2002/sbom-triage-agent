@@ -481,3 +481,24 @@ def test_workers_and_cache_env(monkeypatch):
         monkeypatch.setenv("SBOMTRIAGE_JUDGE_WORKERS", bad)
         with pytest.raises(ValueError):
             load_settings()
+
+
+def test_progress_event_after_each_finding(tmp_path):
+    """규칙 판정 1건 + 모델 판정 2건(작업 스레드 3개). 실제 실행 로그와 on_event 콜백을 거쳐도 멈추지 않는다."""
+    from triage.output import RunLog
+
+    seen = []
+    runlog = RunLog(tmp_path / "log.jsonl", on_event=seen.append)
+    s = settings(tmp_path, workers=3)
+    fake = Fake([lambda m: good(app_id(m))] * 3)
+    judge_all([finding(), finding(in_range=False), finding()], base_evidence(), FILES, ROOT, log=runlog.emit,
+              settings=s, client=LLMClient("fake-small", fake, s, sleep=lambda x: None))
+    runlog.close(status="ok")
+
+    judge = [r for r in seen if r["stage"] == "judge"]
+    progress = [r["data"] for r in judge if r["event"] == "progress"]
+    assert [p["done"] for p in progress] == [1, 2, 3] and {p["total"] for p in progress} == {3}
+    order = [r["event"] for r in judge]
+    first = order.index("progress")
+    last = len(order) - 1 - order[::-1].index("progress")
+    assert order.index("start") < first and last < order.index("end")
