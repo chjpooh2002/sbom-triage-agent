@@ -60,6 +60,39 @@ DOWNLOADS = {
     "log": ("실행 기록 (JSONL)", "application/jsonl"),
 }
 WEB_RESULTS = ROOT / "out" / "web"
+STYLE = """
+<style>
+.block-container {max-width: 1320px; padding-top: 1.2rem;}
+header[data-testid="stHeader"] {height: 0; min-height: 0; background: transparent;}
+h1 {font-size: 1.75rem !important; padding-top: 0.4rem !important;}
+[data-testid="stMetric"] {background: #f7f8fa; border: 1px solid #e3e6eb; border-radius: 14px; padding: 14px 20px;}
+[data-testid="stMetricLabel"] p {font-size: 0.95rem; font-weight: 600; color: #4a4f57;}
+[data-testid="stMetricValue"] {font-size: 2.6rem; font-weight: 750;}
+.st-key-hero {border-left: 7px solid #d93025; background: #fff4f2; border-radius: 12px; padding: 18px 24px;}
+.st-key-hero h3 {margin: 0 0 4px 0; padding: 0;}
+.st-key-dev_panel, .st-key-team_panel {background: #fbfbfc; border: 1px solid #e3e6eb; border-radius: 14px; padding: 18px 22px;}
+.st-key-dev_panel {border-top: 5px solid #d93025;}
+.st-key-team_panel {border-top: 5px solid #1a56c4;}
+.tri-badges {margin: 2px 0 10px;}
+.tri-badge {display: inline-block; padding: 3px 11px; border-radius: 999px; font-size: 0.82rem; font-weight: 650; margin: 0 6px 4px 0;}
+.b-red {background: #fde7e4; color: #a8221a;} .b-amber {background: #fff2cc; color: #7a5200;}
+.b-blue {background: #e6efff; color: #1747a6;} .b-gray {background: #eef0f3; color: #464b53;}
+.b-green {background: #e3f5e8; color: #1a6b31;}
+.tri-section {font-size: 0.8rem; font-weight: 700; letter-spacing: .04em; color: #7a808a; margin: 6px 0 2px;}
+[data-testid="stExpander"] details {border-radius: 12px;}
+[data-testid="stExpander"] summary p {font-size: 1.02rem; font-weight: 650;}
+</style>
+"""
+SEVERITY_LABELS = {"critical": "치명", "high": "높음", "medium": "중간", "low": "낮음"}
+SEVERITY_ORDER = ["critical", "high", "medium", "low"]
+
+
+def badges(*items) -> str:
+    """(문구, 색) 묶음을 배지 HTML로. 문구는 HTML로 이스케이프한다."""
+    import html
+
+    spans = "".join(f'<span class="tri-badge b-{color}">{html.escape(text)}</span>' for text, color in items if text)
+    return '<div class="tri-badges">' + spans + "</div>"
 STAMP_FORMAT = "%Y%m%d-%H%M%S"
 
 
@@ -208,12 +241,12 @@ def show_scan_error(stage: str, error: Exception) -> None:
 
 
 def show_progress(slots, stages) -> None:
-    for stage, (label, unit, _) in STAGES.items():
+    for number, (stage, (label, unit, _)) in enumerate(STAGES.items(), 1):
         status, count = stages.get(stage, ("대기", None))
         suffix = f" · {unit} {count}건" if count is not None else ""
         if stage == "judge" and isinstance(count, str):
             suffix = f" · 판정 · {count}건"
-        slots[stage].text(f"{label} — {status}{suffix}")
+        slots[stage].text(f"{number}. {label} — {status}{suffix}")
 
 
 def update_stage(stages, record) -> None:
@@ -346,6 +379,29 @@ def recheck_command(command: str) -> str:
     return command
 
 
+def team_requests(actions):
+    teams = defaultdict(list)
+    for index, action in enumerate(actions, 1):
+        if action.work_request:
+            teams[action.team or "담당 팀 미정"].append((index, action))
+    return teams
+
+
+def team_draft(label: str, team: str, items) -> str:
+    """받는 팀에 바로 보낼 수 있는 메일 초안."""
+    lines = [f"제목: [{label} 취약점 점검] 영향 확인 요청 {len(items)}건", "",
+             f"{team} 담당자님, 안녕하세요.",
+             f"{label} 서비스의 오픈소스 취약점을 점검했는데, 아래 항목은 소스 코드만으로는 영향 여부를 확정할 수 없어 "
+             "운영 정보 확인을 부탁드립니다. 답변에 따라 바로 업그레이드하거나 조치 불필요로 기록하겠습니다.", ""]
+    for number, (index, action) in enumerate(items, 1):
+        request = action.work_request
+        lines += [f"{number}. {request.title} (할 일 {index} · {action.component})", request.body]
+        lines += [f"   - {branch}" for branch in request.branches]
+        lines.append("")
+    lines.append("확인 후 회신 부탁드립니다. 감사합니다.")
+    return "\n".join(lines)
+
+
 def work_requests_text(label: str, actions) -> str:
     """확인 필요 항목의 업무 요청서를 받는 팀별로 묶은 문서."""
     teams = defaultdict(list)
@@ -364,34 +420,97 @@ def work_requests_text(label: str, actions) -> str:
     return "\n".join(lines)
 
 
+def action_board(actions, findings, evidence):
+    """조치를 고르기 위해 먼저 보는 값을 한 줄씩 모은 표."""
+    rows = []
+    for index, action in enumerate(actions, 1):
+        members = [findings[key] for key in action.findings if key in findings]
+        levels = [f.vulnerability.severity.lower() for f in members]
+        top = next((level for level in SEVERITY_ORDER if level in levels), "")
+        where = next((file_location(evidence[r]) for r in action.evidence_ids
+                      if r in evidence and evidence[r].file), "")
+        affected, pending = action.counts["affected"], action.counts["undetermined"]
+        if affected and action.work_request:
+            todo = "변경안 적용 + 확인 요청"
+        elif affected:
+            todo = "변경안 적용"
+        elif action.work_request:
+            todo = "확인 요청 보내기"
+        else:
+            todo = "영향 조건 확인"
+        rows.append({
+            "순서": index,
+            "구분": "바로 고칠 것" if affected else "확인 필요",
+            "구성요소": action.component,
+            "목표": action.target or "확인 후 결정",
+            "영향 있음": affected,
+            "확인 필요": pending,
+            "최고 심각도": SEVERITY_LABELS.get(top, "미상"),
+            "근거 위치": where,
+            "연락할 부서": action.team or ("개발자 직접" if affected else "-"),
+            "다음 행동": todo,
+        })
+    return rows
+
+
 def show_next_steps(label, actions, downloads, fix_check, command) -> None:
-    """분석 결과 바로 다음에 무엇을 할지 순서대로 보여 준다."""
-    st.markdown("**지금 할 일**")
-    steps = []
-    if "patch" in downloads:
-        name = downloads["patch"][0]
-        steps.append(f"**변경안 적용** · 위 '변경안 (.patch) 내려받기'로 받은 뒤 소스 폴더에서 "
-                     f"`git apply {name}` → 이미지 다시 빌드")
-    elif actions:
-        steps.append("**코드 수정** · 아래 카드의 '어떻게 고치나'대로 선언을 고치고 이미지 다시 빌드")
-    if fix_check.get("status") == "ok":
-        before = fix_check.get("before_candidates") or len(fix_check["resolved"]) + len(fix_check["remaining"])
-        after = fix_check.get("after_candidates") or len(fix_check["remaining"]) + len(fix_check["new"])
-        steps.append(f"**다시 점검** · 아래 명령 실행. 예상 결과: 후보 {before}건 → {after}건 "
-                     f"(해소 {len(fix_check['resolved'])} · 남음 {len(fix_check['remaining'])} · "
-                     f"새로 생김 {len(fix_check['new'])})")
+    """분석 결과 바로 다음에 무엇을 할지, 단계마다 필요한 파일·명령과 함께 보여 준다."""
+    st.subheader("지금 할 일")
+    teams = team_requests(actions)
+    if teams:
+        left, right = st.columns([1, 1], gap="large")
     else:
-        steps.append("**다시 점검** · 아래 명령으로 고친 소스를 다시 점검")
-    pending = [a for a in actions if a.work_request]
-    if pending:
-        teams = ", ".join(dict.fromkeys(a.team or "담당 팀 미정" for a in pending))
-        steps.append(f"**확인 요청 보내기** · 코드만으로 영향을 확정 못 한 항목의 요청서 {len(pending)}건을 "
-                     f"'팀별 확인 요청서'로 받아 {md_escape(teams)}에 보내고, 답에 따라 카드의 분기대로 처리")
-    st.markdown("\n".join(f"{i}. {step}" for i, step in enumerate(steps, 1)))
-    st.code(command, language=None)
-    if pending:
-        st.download_button("팀별 확인 요청서 (.md) 내려받기", work_requests_text(label, actions).encode("utf-8"),
-                           f"requests-{label}.md", "text/markdown", key="finals_requests")
+        left, right = st.container(), None
+    number = 0
+
+    def step(box, text):
+        nonlocal number
+        number += 1
+        box.markdown(f"**{number}. {text}**")
+
+    dev = left.container(key="dev_panel")
+    dev.markdown('<div class="tri-section">개발자가 할 일</div>', unsafe_allow_html=True)
+    if "patch" in downloads:
+        name, data = downloads["patch"]
+        plain = name.replace("`", "")
+        step(dev, "변경안 적용")
+        dev.markdown(f"변경안을 받아 소스 폴더에서 `git apply {plain}`로 적용하고 이미지를 다시 빌드합니다.")
+        dev.download_button(f"{DOWNLOADS['patch'][0]} 내려받기", data, name, DOWNLOADS["patch"][1],
+                            key="finals_top_patch", type="primary")
+    elif actions:
+        step(dev, "코드 수정")
+        dev.markdown("아래 '바로 고칠 것' 카드의 '어떻게 고치나'대로 선언을 고치고 이미지를 다시 빌드합니다.")
+    if actions:
+        step(dev, "다시 점검")
+        if fix_check.get("status") == "ok":
+            before = fix_check.get("before_candidates") or len(fix_check["resolved"]) + len(fix_check["remaining"])
+            after = fix_check.get("after_candidates") or len(fix_check["remaining"]) + len(fix_check["new"])
+            dev.markdown(f"고친 소스로 아래 명령을 실행합니다. 변경안 기준 예상 결과: 후보 {before}건 → {after}건 "
+                         f"(해소 {len(fix_check['resolved'])} · 남음 {len(fix_check['remaining'])} · "
+                         f"새로 생김 {len(fix_check['new'])})")
+        else:
+            dev.markdown("고친 소스로 아래 명령을 실행해 해소 여부를 확인합니다.")
+        dev.code(command, language=None, wrap_lines=True)
+    if "report" in downloads:
+        name, data = downloads["report"]
+        step(dev, "결과 공유")
+        dev.markdown("판정 근거가 모두 담긴 보고서를 보안 담당자·팀장에게 공유합니다.")
+        dev.download_button(f"{DOWNLOADS['report'][0]} 내려받기", data, name, DOWNLOADS["report"][1],
+                            key="finals_top_report", type="secondary" if "patch" in downloads else "primary")
+    if right is None:
+        return
+    panel = right.container(key="team_panel")
+    pending = sum(len(items) for items in teams.values())
+    panel.markdown('<div class="tri-section">연락할 부서 · 메일 초안 준비됨</div>', unsafe_allow_html=True)
+    panel.markdown(f"**확인 요청 보내기** · 코드만으로 영향을 확정하지 못한 항목의 요청서 {pending}건을 "
+                   f"{len(teams)}개 부서에 보내고, 답이 오면 카드의 분기대로 처리합니다.")
+    panel.markdown(badges(*((f"{team} {len(items)}건", "blue") for team, items in teams.items())),
+                   unsafe_allow_html=True)
+    for tab, (team, items) in zip(panel.tabs([f"{team} ({len(group)})" for team, group in teams.items()]), teams.items()):
+        tab.caption("오른쪽 위 복사 버튼으로 메일에 그대로 붙여 넣을 수 있습니다.")
+        tab.code(team_draft(label, team, items), language=None, height=320, wrap_lines=True)
+    panel.download_button("팀별 확인 요청서 (.md) 내려받기", work_requests_text(label, actions).encode("utf-8"),
+                          f"requests-{label}.md", "text/markdown", key="finals_requests")
 
 
 def show_search(query, findings, membership):
@@ -425,63 +544,70 @@ def show_card(action, index, expanded, findings, evidence, plans, checklists, co
     target = action.target or ("영향 확인 후 결정" if action.kind == "confirm" else "목표 버전 확인 필요")
     title = f"{index}. {kind} · {md_escape(current)} → {md_escape(target)} · 관련 취약점 {len(members)}건"
     with st.expander(title, expanded=expanded):
-        st.caption(f"영향 있음 {action.counts['affected']}건 · 확인 필요 {action.counts['undetermined']}건")
-        st.markdown("**무슨 일이 생기나**")
-        # 대표 후보가 확인 필요이면 설명이 확인 지시문이 되므로, 영향 있음 판정의 설명을 먼저 쓴다.
-        lead = next((f for f in members if finding_state(f) == "affected"), top)
-        st.markdown(md_escape(reason_text(lead)))
-        st.markdown("**어디서**")
-        if action.evidence_ids:
-            show_evidence(action.evidence_ids, evidence)
-        else:
-            st.caption("대표 후보에 연결된 근거가 없습니다.")
-
-        st.markdown("**무엇을 확인하나**" if action.kind == "confirm" else "**어떻게 고치나**")
-        if action.kind == "confirm":
-            for item in action.missing_info:
-                st.markdown(f"{md_escape(item.what)} · 확인할 곳 {md_escape(item.where)}")
-            if not action.missing_info:
-                st.caption("추가 확인 항목이 기록되지 않았습니다.")
-        finding_keys = set(action.findings)
-        matching = [item for item in fix_plan if not finding_keys.isdisjoint(item["findings"])]
-        if matching:
-            if action.kind == "confirm":
-                st.markdown("**어떻게 고치나**")
-            for item in matching:
-                if item["kind"] == "change":
-                    st.caption(f"{md_escape(item['file'])}:{item['line']}")
-                    st.code(f"-{item['before']}\n+{item['after']}", language="diff")
-                elif item["kind"] == "manual":
-                    st.markdown(f"수동 확인 · {md_escape(item['reason'])}")
-        elif action.kind != "confirm":
-            if action.target:
-                st.markdown(f"교체 목표 {md_escape(action.target)}")
-            relevant = [plans[f.key] for f in members if f.key in plans and plans[f.key].target_version == action.target]
-            if relevant:
-                steps = dict.fromkeys(step for plan in relevant for step in plan.steps)
-                if steps:
-                    st.markdown("\n".join(f"{i}. {md_escape(step)}" for i, step in enumerate(steps, 1)))
-                if not all(plan.verified for plan in relevant):
-                    st.caption("목표 버전 확인 필요")
+        st.markdown(badges(
+            (f"영향 있음 {action.counts['affected']}건" if action.counts["affected"] else "", "red"),
+            (f"확인 필요 {action.counts['undetermined']}건" if action.counts["undetermined"] else "", "amber"),
+            (f"연락할 부서 {action.team}" if action.team else ("직접 수정" if action.counts["affected"] else ""), "blue"),
+        ), unsafe_allow_html=True)
+        left, right = st.columns(2, gap="large")
+        with left:
+            st.markdown("**무슨 일이 생기나**")
+            # 대표 후보가 확인 필요이면 설명이 확인 지시문이 되므로, 영향 있음 판정의 설명을 먼저 쓴다.
+            lead = next((f for f in members if finding_state(f) == "affected"), top)
+            st.markdown(md_escape(reason_text(lead)))
+            st.markdown("**어디서**")
+            if action.evidence_ids:
+                show_evidence(action.evidence_ids, evidence)
             else:
-                fixes = dict.fromkeys(v for f in members for v in f.vulnerability.fixed_versions)
-                st.caption("목표 버전 확인 필요 · 조회된 수정 버전 " + (", ".join(map(md_escape, fixes)) or "없음"))
+                st.caption("대표 후보에 연결된 근거가 없습니다.")
+
+        with right:
+            st.markdown("**무엇을 확인하나**" if action.kind == "confirm" else "**어떻게 고치나**")
+            if action.kind == "confirm":
+                for item in action.missing_info:
+                    st.markdown(f"{md_escape(item.what)} · 확인할 곳 {md_escape(item.where)}")
+                if not action.missing_info:
+                    st.caption("추가 확인 항목이 기록되지 않았습니다.")
+            finding_keys = set(action.findings)
+            matching = [item for item in fix_plan if not finding_keys.isdisjoint(item["findings"])]
+            if matching:
+                if action.kind == "confirm":
+                    st.markdown("**어떻게 고치나**")
+                for item in matching:
+                    if item["kind"] == "change":
+                        st.caption(f"{md_escape(item['file'])}:{item['line']}")
+                        st.code(f"-{item['before']}\n+{item['after']}", language="diff")
+                    elif item["kind"] == "manual":
+                        st.markdown(f"수동 확인 · {md_escape(item['reason'])}")
+            elif action.kind != "confirm":
+                if action.target:
+                    st.markdown(f"교체 목표 {md_escape(action.target)}")
+                relevant = [plans[f.key] for f in members if f.key in plans and plans[f.key].target_version == action.target]
+                if relevant:
+                    steps = dict.fromkeys(step for plan in relevant for step in plan.steps)
+                    if steps:
+                        st.markdown("\n".join(f"{i}. {md_escape(step)}" for i, step in enumerate(steps, 1)))
+                    if not all(plan.verified for plan in relevant):
+                        st.caption("목표 버전 확인 필요")
+                else:
+                    fixes = dict.fromkeys(v for f in members for v in f.vulnerability.fixed_versions)
+                    st.caption("목표 버전 확인 필요 · 조회된 수정 버전 " + (", ".join(map(md_escape, fixes)) or "없음"))
+            st.markdown("**고친 뒤 확인**")
+            if fix_check.get("status") == "ok":
+                resolved = len(set(action.findings) & set(fix_check["resolved"]))
+                st.markdown(f"변경안 적용 시 이 항목 {len(action.findings)}건 중 해소 **{resolved}건** · "
+                            f"남음 **{len(action.findings) - resolved}건**")
+            elif reason := fix_check.get("reason"):
+                st.caption(md_escape(reason))
+            st.code(command, language=None)
         st.markdown("**누구에게**")
         if request := action.work_request:
-            st.markdown(f"받는 팀 {md_escape(action.team)}")
-            st.code("\n".join([request.title, request.body, *request.branches]), language=None)
+            st.markdown(f"받는 팀 **{md_escape(action.team)}** · {md_escape(request.title)}")
+            st.caption("질문과 답별 처리 방법은 위 '연락할 부서'의 메일 초안에 들어 있습니다.")
         elif action.counts["undetermined"] == 0:
             st.caption("모두 영향 있음으로 확정되어 확인 요청 없이 바로 고치면 됩니다.")
         else:
             st.caption("대표 판정에 지정된 팀과 업무 요청서가 없습니다.")
-        st.markdown("**고친 뒤 확인**")
-        if fix_check.get("status") == "ok":
-            resolved = len(set(action.findings) & set(fix_check["resolved"]))
-            st.markdown(f"변경안 적용 시 이 항목 {len(action.findings)}건 중 해소 **{resolved}건** · "
-                        f"남음 **{len(action.findings) - resolved}건**")
-        elif reason := fix_check.get("reason"):
-            st.caption(md_escape(reason))
-        st.code(command, language=None)
         details = st.expander(f"포함된 취약점 {len(action.findings)}건", key=f"details_{index}", on_change="rerun")
         if details.open:
             with details:
@@ -502,7 +628,10 @@ def show_results(bundle, downloads, failures, command=None) -> None:
             st.error(md_escape(Redactor().text(anomaly.message)))
     metrics = [("오늘 할 일", len(actions)), ("영향 있음", counts["affected"]),
                ("확인 필요", counts["undetermined"]), ("영향 없음", counts["not_affected"])]
-    for column, (label, value) in zip(st.columns(4), metrics):
+    # 한 화면에 결론과 숫자가 같이 보이도록 윗줄을 결론(왼쪽)과 지표 2×2(오른쪽)로 나눈다.
+    top_left, top_right = st.columns([3, 2], gap="large", vertical_alignment="center")
+    tiles = [*top_right.columns(2), *top_right.columns(2)]
+    for column, (label, value) in zip(tiles, metrics):
         column.metric(label, value)
 
     if counts["affected"]:
@@ -513,19 +642,52 @@ def show_results(bundle, downloads, failures, command=None) -> None:
         conclusion = "모든 후보가 영향 없음으로 판정되어 먼저 확인할 것이 없습니다."
     else:
         conclusion = "취약점 후보가 없어 먼저 확인할 것은 이번 점검의 수집·조회 범위입니다."
-    st.markdown(conclusion)
-    quick_downloads = [kind for kind in ("report", "sbom", "patch") if kind in downloads]
-    if quick_downloads:
-        for column, kind in zip(st.columns(len(quick_downloads)), quick_downloads):
-            name, data = downloads[kind]
-            label, mime = DOWNLOADS[kind]
-            column.download_button(f"{label} 내려받기", data, name, mime, key=f"finals_top_{kind}",
-                                   type="primary" if kind == "report" else "secondary")
+    evidence = {e.id: e for e in bundle.evidence}
+    findings = {f.key: f for f in bundle.findings}
+    fix_check = bundle.meta.get("fix_check", {})
+    hero = top_left.container(key="hero")
+    hero.markdown(f"### {conclusion}")
+    if actions:
+        first = actions[0]
+        where = next((file_location(evidence[r]) for r in first.evidence_ids if r in evidence and evidence[r].file), "")
+        solved = len(set(first.findings) & set(fix_check.get("resolved", [])))
+        hero.markdown(badges(
+            (f"{first.component} → {first.target}" if first.target else "", "gray"),
+            (f"영향 있음 {first.counts['affected']}건" if first.counts["affected"] else "", "red"),
+            (f"확인 필요 {first.counts['undetermined']}건" if first.counts["undetermined"] else "", "amber"),
+            (f"근거 {where}" if where else "", "gray"),
+            (f"변경안 적용 시 {solved}건 해소" if solved else "", "green"),
+            (f"연락할 부서 {first.team}" if first.team else "", "blue"),
+        ), unsafe_allow_html=True)
     label = bundle.meta.get("label") or "서비스"
     command = recheck_command(command or scan_command(label, ""))
     if actions:
-        show_next_steps(label, actions, downloads, bundle.meta.get("fix_check", {}), command)
-    query = st.text_input("취약점·패키지 검색", placeholder="CVE, GHSA 또는 패키지 이름").strip()
+        st.subheader("조치 보드")
+        st.caption("조치를 고를 때 보는 값: 영향 있음 여부 → 근거 위치 → 목표 버전 → 연락할 부서. 위에서부터 우선순위입니다.")
+        import pandas as pd
+
+        tone = {"바로 고칠 것": "background-color:#fde7e4;color:#a8221a;font-weight:650",
+                "확인 필요": "background-color:#fff2cc;color:#7a5200;font-weight:650"}
+        board = pd.DataFrame(action_board(actions, findings, evidence))
+        st.dataframe(
+            board.style.map(lambda value: tone.get(value, ""), subset=["구분"]),
+            hide_index=True, use_container_width=True, height=min(38 + 35 * len(board), 420),
+            column_config={
+                "순서": st.column_config.NumberColumn(width=48),
+                "구분": st.column_config.TextColumn(width=100),
+                "구성요소": st.column_config.TextColumn(width=150),
+                "목표": st.column_config.TextColumn(width=110),
+                "영향 있음": st.column_config.ProgressColumn(
+                    min_value=0, max_value=max(a.counts["affected"] for a in actions) or 1, format="%d건", width=110),
+                "확인 필요": st.column_config.NumberColumn(format="%d건", width=72),
+                "최고 심각도": st.column_config.TextColumn(width=80),
+                "근거 위치": st.column_config.TextColumn(width=170),
+                "연락할 부서": st.column_config.TextColumn(width=120),
+                "다음 행동": st.column_config.TextColumn(width=160),
+            },
+        )
+    show_next_steps(label, actions, downloads, fix_check, command)
+    query = st.text_input("특정 취약점·패키지 찾기", placeholder="CVE, GHSA 또는 패키지 이름").strip()
     if failures:
         st.warning("일부 단계 실패")
         for stage, reason in failures.items():
@@ -534,15 +696,19 @@ def show_results(bundle, downloads, failures, command=None) -> None:
         st.warning(md_escape(limitation))
     membership = {key: index for index, action in enumerate(actions, 1) for key in action.findings}
     matched = show_search(query, bundle.findings, membership) if query else set()
-    evidence = {e.id: e for e in bundle.evidence}
     plans = {r.finding_key: r for r in bundle.remediations}
-    findings = {f.key: f for f in bundle.findings}
     checklists = bundle.meta.get("checklists", {})
     fix_plan = bundle.meta.get("fix_plan", [])
-    fix_check = bundle.meta.get("fix_check", {})
-    for index, action in enumerate(actions, 1):
-        show_card(action, index, index <= 3 or index in matched, findings, evidence, plans, checklists, command,
-                  fix_plan, fix_check)
+    numbered = list(enumerate(actions, 1))
+    fix_now = [(i, a) for i, a in numbered if a.counts["affected"]]
+    confirm = [(i, a) for i, a in numbered if not a.counts["affected"]]
+    for title, group in ((f"바로 고칠 것 {len(fix_now)}개", fix_now), (f"확인이 필요한 것 {len(confirm)}개", confirm)):
+        if not group:
+            continue
+        st.subheader(title)
+        for index, action in group:
+            show_card(action, index, index == 1 or index in matched, findings, evidence, plans, checklists, command,
+                      fix_plan, fix_check)
 
     other_anomalies = [item for item in bundle.anomalies if item.kind != "judge_degraded"]
     if other_anomalies:
@@ -565,13 +731,16 @@ def show_results(bundle, downloads, failures, command=None) -> None:
             st.markdown(f"{md_escape(first.component.display)} · {len(members)}건 · "
                         f"대표 사유 {md_escape(reason_text(first))}")
 
-    st.subheader("내려받기")
+    st.subheader("기록용 파일")
     for kind, (label, mime) in DOWNLOADS.items():
+        if kind in ("patch", "report") and kind in downloads:
+            continue  # 위 '지금 할 일'에서 내려받는다.
         if kind in downloads:
             name, data = downloads[kind]
             st.download_button(label, data, name, mime, key=f"finals_download_{kind}")
         elif kind != "patch":
             st.caption(f"{label} 파일이 생성되지 않았습니다.")
+    st.caption("PDF 보고서와 변경안은 위 '지금 할 일'에서 내려받습니다.")
 
 
 def finals_screen() -> None:
@@ -610,15 +779,21 @@ def finals_screen() -> None:
         offline = st.checkbox("오프라인 실행 (저장된 조회 결과만 사용)", value=False)
         submitted = st.form_submit_button("점검 시작", type="primary")
 
-    st.subheader("진행 상황")
-    columns = st.columns(3)
-    slots = {stage: columns[index % len(columns)].empty() for index, stage in enumerate(STAGES)}
     stages = st.session_state.get("finals_stages", {})
     if submitted:
         st.session_state.pop("finals_result", None)
         stages = {}
         st.session_state["finals_stages"] = stages
-    show_progress(slots, stages)
+    if submitted:
+        box = st.container()
+        box.subheader("진행 상황")
+    elif stages:
+        box = st.expander("점검 단계 기록", expanded=False)
+    else:
+        box = st.empty().container()
+    slots = {stage: box.empty() for stage in STAGES}
+    if submitted or stages:
+        show_progress(slots, stages)
 
     active_stage = "run"
 
@@ -819,6 +994,7 @@ def legacy_screen() -> None:
 
 def main() -> None:
     st.set_page_config(page_title="SW 공급망 스캐닝 에이전트", layout="wide")
+    st.markdown(STYLE, unsafe_allow_html=True)
     finals, legacy = st.tabs(["본선 소스 점검", "기존 스캔 결과 분석"])
     with finals:
         finals_screen()
