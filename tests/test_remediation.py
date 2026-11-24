@@ -14,7 +14,7 @@ from triage.remediation.prompt import RemediationDraft
 from triage.remediation.providers.anthropic_provider import AnthropicProvider
 from triage.remediation.providers.base import ProviderError
 from triage.remediation.providers.openai_provider import OpenAIProvider
-from triage.remediation.versions import in_range, is_affected
+from triage.remediation.versions import cmp, fix_for_line, in_range, is_affected, ordered_versions
 
 FX = Path(__file__).resolve().parents[1] / "samples" / "fixtures"
 LOG4J_AVAILABLE = ["2.3.1", "2.3.2", "2.12.2", "2.12.4", "2.14.1", "2.15.0", "2.16.0", "2.17.0", "2.17.1",
@@ -38,6 +38,13 @@ def test_ranges_and_line_fix():
     # 범위 정보가 없으면 '설치 버전대의 수정 버전'으로 판단: 2.14.1 의 다음 수정은 2.16.0
     assert is_affected("2.15.0", "2.14.1", [], ["2.3.1", "2.12.2", "2.16.0"], "maven")
     assert not is_affected("2.16.0", "2.14.1", [], ["2.3.1", "2.12.2", "2.16.0"], "maven")
+
+
+def test_pypi_candidates_with_mixed_version_formats_can_be_compared():
+    versions = ["2.5.vendor", "2.4.0", "2.0.0"]
+    assert cmp("2.5.vendor", "2.4.0", "pypi") > 0
+    assert ordered_versions(versions, "pypi") == ["2.0.0", "2.4.0", "2.5.vendor"]
+    assert fix_for_line("2.0.0", versions, "pypi") == "2.4.0"
 
 
 def test_rule_pick_fixes_whole_group_and_skips_prerelease():

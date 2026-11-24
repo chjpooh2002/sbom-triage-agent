@@ -11,7 +11,7 @@ import triage
 from triage import finals
 from triage.cli import app
 from triage.lookup import LookupResult
-from triage.models import Anomaly, Evidence, Finding, Vulnerability
+from triage.models import Anomaly, Evidence, Finding, Status, Verdict, Vulnerability
 from triage.scope import ScopeResult
 
 
@@ -40,13 +40,66 @@ def test_scan_command_writes_submission_files(source, tmp_path, monkeypatch):
     assert (out / "report-demo.pdf").read_bytes().startswith(b"%PDF-")
 
     events = read_log(out / "log-demo-run2.jsonl")
-    stages = ("collect", "scope", "lookup", "judge", "cyclonedx", "pdf")
+    stages = ("collect", "scope", "lookup", "judge", "enrich", "priority", "remediate", "cyclonedx", "pdf")
     assert [(e["stage"], e["event"]) for e in events if e["stage"] in stages and e["event"] in {"start", "end"}] == [
         (stage, event) for stage in stages for event in ("start", "end")
     ]
     assert all(event["data"]["seconds"] >= 0 for event in events if event["stage"] in stages and event["event"] == "end")
     assert (events[-1]["stage"], events[-1]["event"]) == ("run", "end")
     assert {"total_seconds", "total_tokens"} <= events[-1]["data"].keys()
+
+
+@pytest.mark.parametrize("registry, target, verified", [
+    (["1.2.4", "1.2.5"], "1.2.5", True),
+    (["1.2.4"], "1.2.4", True),
+    (None, "1.2.5", False),
+])
+def test_scan_plans_remediation_from_verdicts(source, tmp_path, monkeypatch, registry, target, verified):
+    fixture = Path(__file__).parent / "fixtures" / "finals" / "scan" / "remediation.json"
+    cases = json.loads(fixture.read_text(encoding="utf-8"))
+
+    def lookup(components, offline=False, log=None):
+        return LookupResult([
+            Finding(key=state, component=components[0], status=Status.affected,
+                    vulnerability=Vulnerability.model_validate(data))
+            for state, data in cases.items()
+        ], [])
+
+    def judge(findings, evidence, files, root, log, *, anomalies, usage):
+        for finding in findings:
+            finding.verdict = Verdict(state=finding.key)
+        findings[0].hints["judge_fix_version"] = "1.2.5"
+        return findings
+
+    def list_versions(component, offline=False):
+        assert offline
+        return registry
+
+    monkeypatch.setattr(finals, "lookup", lookup)
+    monkeypatch.setattr("triage.remediation.service.list_versions", list_versions)
+    result = finals.run_scan("plans", source, tmp_path / "result", offline=True, judge=judge)
+    assert not result.failures
+    assert {f.key: f.status for f in result.bundle.findings} == {
+        "affected": Status.affected, "not_affected": Status.not_affected, "undetermined": Status.unknown,
+    }
+    assert result.bundle.results[-1].finding_key == "not_affected"
+    plans = {plan.finding_key: plan for plan in result.bundle.remediations}
+    assert set(plans) == {"affected", "undetermined"}
+    assert all(plan.target_version == target and plan.verified is verified for plan in plans.values())
+    registry_evidence = [e for e in result.bundle.evidence if e.id.startswith("remediate-")]
+    assert len(registry_evidence) == int(verified)
+    steps = {record["stage"]: record["data"] for record in read_log(result.paths["log"]) if record["event"] == "end"}
+    assert all(steps[stage]["status"] == "ok" and steps[stage]["seconds"] >= 0
+               for stage in ("enrich", "priority", "remediate"))
+    assert steps["priority"]["prioritized"] == 3 and steps["remediate"]["remediations"] == 2
+
+    if extract := shutil.which("pdftotext"):
+        report = subprocess.check_output([extract, "-enc", "UTF-8", str(result.paths["report"]), "-"], encoding="utf-8")
+        text = " ".join(report.split())
+        target_label = f"목표 버전 {target}" if verified else f"목표 버전 후보 {target} (확인 필요)"
+        assert target_label in text
+        assert "검증 계획" in text and "조치 후 잠금 파일과 배포 산출물에서 실제 설치 버전을 확인합니다." in text
+        assert "영향이 확인되면 아래 조치 계획을 적용합니다." in text
 
 
 @pytest.mark.parametrize("with_failing_judge", [False, True])

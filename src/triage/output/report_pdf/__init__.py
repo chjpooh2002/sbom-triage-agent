@@ -245,6 +245,7 @@ def _context(bundle: TriageBundle, meta: dict) -> dict:
             item["vulnerability"]["id"], item["component"]["id"], item["asset"] or "",
         ))
     summaries = [item for findings in groups.values() for item in findings]
+    action_items = [*groups["affected"], *(item for item in groups["undetermined"] if item["remediation"])]
     details = {state: _detail_groups(groups[state], state) for state in ("affected", "undetermined")}
     extra_links = defaultdict(dict)
     for item in summaries:
@@ -266,6 +267,7 @@ def _context(bundle: TriageBundle, meta: dict) -> dict:
         "summaries": summaries,
         "details": details,
         "top_actions": groups["affected"][:3],
+        "action_items": action_items,
         "work_requests": work_requests,
         "states": _STATES,
         "deployment": _DEPLOYMENT,

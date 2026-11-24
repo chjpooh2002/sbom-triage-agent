@@ -107,13 +107,13 @@ class _Run:
         if self.log:
             self.log("judge", event, **data)
 
-    def judge(self, f: Finding) -> tuple[Verdict, Workspace, list[Anomaly]]:
+    def judge(self, f: Finding) -> tuple[Verdict, Workspace, list[Anomaly], str | None]:
         ws = Workspace(self.root, self.files, self.base, self.settings, self.log, subject=f.key)
         try:
-            verdict, extra = self._judge(f, ws)
+            verdict, extra, fix = self._judge(f, ws)
         except Exception as e:  # 한 건의 예기치 못한 오류가 전체 실행을 멈추지 않게 한다
             self.emit("error", subject=f.key, error=type(e).__name__, trace=traceback.format_exc(limit=4)[-1500:])
-            verdict, extra = unavailable(f, f"판정 중 오류({type(e).__name__})", ws.checklist), []
+            verdict, extra, fix = unavailable(f, f"판정 중 오류({type(e).__name__})", ws.checklist), [], None
         if not verdict.decided_at:
             verdict.decided_at = now()
         # 강등·검증 꺼짐 판정에도 없는 근거 ID가 보고서로 새지 않게 한다
@@ -132,12 +132,12 @@ class _Run:
             except Exception as e:  # 요청서 문구 실패는 템플릿으로 대체
                 self.emit("explain.error", subject=f.key, error=type(e).__name__)
                 verdict.work_request = explain.template_request(f, verdict, explain.team_for(verdict, ws.checklist))
-        return verdict, ws, [*ws.anomalies.values(), *extra]
+        return verdict, ws, [*ws.anomalies.values(), *extra], fix
 
-    def _judge(self, f: Finding, ws: Workspace) -> tuple[Verdict, list[Anomaly]]:
+    def _judge(self, f: Finding, ws: Workspace) -> tuple[Verdict, list[Anomaly], str | None]:
         s = self.settings
         if self.client is None:
-            return unavailable(f, "모델 미설정(SBOMTRIAGE_MODEL·OPENAI_API_KEY)"), []
+            return unavailable(f, "모델 미설정(SBOMTRIAGE_MODEL·OPENAI_API_KEY)"), [], None
         checklist = build_checklist(f, self.client, s, self.log)
         ws.checklist = checklist
         gathered = ws.gather(f, checklist, self.graph)
@@ -163,7 +163,10 @@ class _Run:
                 verdict.escalated = True
                 verdict.verifier_notes.append(f"승급 판정 미채택: {reason}")
         verdict.decided_at = now()
-        return verdict, self._suspicious(outcome, ws)
+        fix = ((outcome.output or {}).get("fix_version") or "").strip()
+        if not verdict.decided_by.startswith("model:") or fix not in f.vulnerability.fixed_versions:
+            fix = None
+        return verdict, self._suspicious(outcome, ws), fix
 
     def _settle(self, f, checklist, ws, outcome, prompt, notes) -> Verdict:
         """검증 → 1회 재요청 → 강등."""
@@ -286,14 +289,16 @@ def judge_all(findings: list[Finding], evidence: list[Evidence], files: list[Sou
             jobs = {i: pool.submit(run.judge, findings[i]) for i in pending}
         seen = {(e.kind, e.file, e.line_start, e.line_end, e.snippet, e.url, e.command, e.note): e.id for e in base}
         for i in pending:
-            verdict, ws, local = jobs[i].result()
+            verdict, ws, local, fix = jobs[i].result()
             mapping = _publish(ws.new, store, seen, new_evidence)
             verdict = _rewrite(verdict, mapping)
             found += [_rewrite(a, mapping) for a in local]
             if any(k != v for k, v in mapping.items()):
                 emit("evidence.renumber", subject=findings[i].key,
                      mapping={k: v for k, v in mapping.items() if k != v})
-            results[i] = findings[i].model_copy(update={"verdict": verdict})
+            finding = findings[i]
+            hints = {**finding.hints, "judge_fix_version": fix} if fix else finding.hints
+            results[i] = finding.model_copy(update={"verdict": verdict, "hints": hints})
 
     for i in sorted(results):
         f, v = results[i], results[i].verdict

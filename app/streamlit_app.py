@@ -35,6 +35,9 @@ STAGES = {
     "scope": ("범위", "배포 확인 대상 파일", "files"),
     "lookup": ("조회", "취약점 후보", "candidates"),
     "judge": ("판정·검증", "판정", "verdicts"),
+    "enrich": ("위험 정보 보강", "후보", "candidates"),
+    "priority": ("우선순위 산정", "후보", "prioritized"),
+    "remediate": ("조치·검증 계획", "조치안", "remediations"),
     "cyclonedx": ("구성요소 목록 생성", "생성 파일", None),
     "pdf": ("PDF 보고서 생성", "생성 파일", None),
 }
