@@ -34,7 +34,7 @@ class TemplateProvider:
         transitive = comp.get("direct") is False
         path = " → ".join(p.rsplit("/", 1)[-1] for p in comp["dependency_paths"][0]) if comp.get("dependency_paths") else ""
         if target:
-            summary = f"{coord} {comp['installed_version']} 에 취약점 {len(vulns)}건({ids})이 있다. {risk} {target} 으로 올리면 모두 해결된다."
+            summary = f"{coord} {comp['installed_version']} 의 관련 권고문은 {len(vulns)}건({ids})이다. {risk} {target} 적용 후 영향 범위를 다시 확인한다."
             steps = []
             if transitive:
                 steps.append(f"이 라이브러리는 전이 의존성이다{f'({path})' if path else ''}. 먼저 상위 라이브러리를 최신으로 올려 해결되는지 확인한다.")
@@ -44,7 +44,7 @@ class TemplateProvider:
             steps += ["의존성 트리를 다시 확인해 다른 경로로 낮은 버전이 들어오지 않는지 본다(gradle dependencies / mvn dependency:tree).",
                       "회귀 테스트 후 배포하고, SBOM을 다시 생성해 스캔 결과에서 사라졌는지 확인한다."]
         else:
-            summary = f"{coord} {comp['installed_version']} 에 취약점 {len(vulns)}건({ids})이 있으나 확인된 수정 버전이 없다. {risk}"
+            summary = f"{coord} {comp['installed_version']} 의 관련 권고문은 {len(vulns)}건({ids})이고 확인된 수정 버전이 없다. {risk}"
             steps = ["벤더 권고와 이슈 트래커에서 수정 계획을 확인한다.", "취약한 기능을 끄거나 대체 라이브러리를 검토한다.",
                      "외부 노출 경로에 차단 규칙(WAF 등)을 적용하고 모니터링한다."]
         notes = ctx.get("rule_notes") or []

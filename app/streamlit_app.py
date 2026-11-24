@@ -23,6 +23,7 @@ sys.path.insert(0, str(ROOT / "src"))
 from triage.actions import build_actions  # noqa: E402
 from triage.output._common import file_location, finding_state  # noqa: E402
 from triage.pipeline import run  # noqa: E402
+from triage.output._redact import Redactor  # noqa: E402
 from triage.report import excel  # noqa: E402
 from triage.report.view import action_groups, finding_row, reasons_text, summary  # noqa: E402
 
@@ -42,6 +43,9 @@ STAGES = {
     "scope": ("범위", "배포 확인 대상 파일", "files"),
     "lookup": ("조회", "취약점 후보", "candidates"),
     "judge": ("판정·검증", "판정", "verdicts"),
+    "enrich": ("위험 정보 보강", "후보", "candidates"),
+    "priority": ("우선순위 산정", "후보", "prioritized"),
+    "remediate": ("조치·검증 계획", "조치안", "remediations"),
     "cyclonedx": ("구성요소 목록 생성", "생성 파일", None),
     "pdf": ("PDF 보고서 생성", "생성 파일", None),
 }
@@ -317,6 +321,9 @@ def show_card(action, index, expanded, findings, evidence, plans, checklists, co
 def show_results(bundle, downloads, failures, command=None) -> None:
     actions = build_actions(bundle)
     counts = Counter(map(finding_state, bundle.findings))
+    for anomaly in bundle.anomalies:
+        if anomaly.kind == "judge_degraded":
+            st.error(Redactor().text(anomaly.message))
     conclusion, search = st.columns([2, 1], vertical_alignment="center")
     conclusion.subheader(f"오늘 할 일 {len(actions)}개 · 영향 있음 {counts['affected']}건 · "
                          f"확인 필요 {counts['undetermined']}건 · 영향 없음 {counts['not_affected']}건")
@@ -338,9 +345,10 @@ def show_results(bundle, downloads, failures, command=None) -> None:
     for index, action in enumerate(actions, 1):
         show_card(action, index, index <= 3 or index in matched, findings, evidence, plans, checklists, command)
 
-    if bundle.anomalies:
+    other_anomalies = [item for item in bundle.anomalies if item.kind != "judge_degraded"]
+    if other_anomalies:
         st.subheader("주의 신호")
-        for item in bundle.anomalies:
+        for item in other_anomalies:
             if item.kind in {"instruction_like_comment", "stage_failure"}:
                 label = ("판정을 유도하는 주석을 발견했습니다 — 근거로 쓰지 않았습니다"
                          if item.kind == "instruction_like_comment" else item.message)
@@ -463,8 +471,6 @@ def finals_screen() -> None:
                     show_progress(slots, stages)
                     show_scan_error(active_stage, exc)
                     return
-
-            from triage.output._redact import Redactor
 
             redactor = Redactor((str(root), str(temporary)))
             failures = {stage: redactor.text(reason) for stage, reason in result.failures.items()}
