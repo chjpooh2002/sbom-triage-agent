@@ -1,0 +1,8 @@
+<project>
+  <parent><groupId>org.fixture</groupId><artifactId>press</artifactId><version>1.0</version></parent>
+  <artifactId>axle</artifactId>
+  <dependencies>
+    <dependency><groupId>org.fixture</groupId><artifactId>bearing</artifactId></dependency>
+    <dependency><groupId>org.fixture</groupId><artifactId>unnumbered</artifactId></dependency>
+  </dependencies>
+</project>

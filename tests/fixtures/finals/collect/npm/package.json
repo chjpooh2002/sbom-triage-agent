@@ -1,0 +1,7 @@
+{
+  "dependencies": {
+    "arc-dial": "^2.0.0",
+    "copper-rim": "^4.0.0"
+  },
+  "devDependencies": {"ink-probe": "~0.6.0"}
+}

@@ -1,0 +1,16 @@
+<project>
+  <parent><groupId>org.fixture</groupId><artifactId>press</artifactId><version>1.0</version></parent>
+  <artifactId>wheel</artifactId>
+  <properties>
+    <bearing.version>2.7.0</bearing.version>
+  </properties>
+  <dependencies>
+    <dependency>
+      <groupId>org.fixture</groupId><artifactId>bearing</artifactId>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.fixture</groupId><artifactId>sleeve</artifactId>
+    </dependency>
+  </dependencies>
+</project>

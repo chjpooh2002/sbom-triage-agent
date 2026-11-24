@@ -1,0 +1,9 @@
+[[package]]
+name = "thin-lens"
+version = "4.1.0"
+groups = ["main"]
+
+[[package]]
+name = "blue-spline"
+version = "0.3.0"
+groups = ["dev"]

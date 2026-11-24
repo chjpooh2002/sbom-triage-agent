@@ -1,0 +1,8 @@
+<project>
+  <groupId>org.fixture</groupId><artifactId>metal-parent</artifactId><version>1.0</version>
+  <properties><bearing.version>2.4.0</bearing.version></properties>
+  <dependencyManagement><dependencies><dependency>
+    <groupId>org.fixture</groupId><artifactId>bearing</artifactId>
+    <version>${bearing.version}</version>
+  </dependency></dependencies></dependencyManagement>
+</project>
