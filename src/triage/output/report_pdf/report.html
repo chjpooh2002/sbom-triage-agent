@@ -85,7 +85,11 @@
 </header>
 
 <section>
-  <h2>먼저 고칠 것 3개</h2>
+  {% if top_actions %}
+    <h2>먼저 고칠 것 {{ top_actions | length }}개</h2>
+  {% else %}
+    <h2>먼저 고칠 것 — 영향 있음 확정 항목 없음</h2>
+  {% endif %}
   {% if top_actions %}
   <ol>
     {% for item in top_actions %}
@@ -100,8 +104,6 @@
       </li>
     {% endfor %}
   </ol>
-  {% elif not failed_stages %}
-    <p>영향 있음으로 확인된 조치 대상이 없습니다.</p>
   {% endif %}
   {% if failed_stages %}
     <p class="notice"><strong>점검 일부 실패: {{ failed_stages | join(', ') }}</strong> · 실패한 단계의 결과를 확인해 주세요.</p>
@@ -110,9 +112,13 @@
 
 <section>
   <h2>입력 이상</h2>
-  {% if anomalies %}
+  {% for anomaly in anomalies if anomaly.kind == 'judge_degraded' %}
+    <p class="notice"><strong>{{ anomaly.message }}</strong></p>
+  {% endfor %}
+  {% set other_anomalies = anomalies | rejectattr('kind', 'equalto', 'judge_degraded') | list %}
+  {% if other_anomalies %}
     <ul>
-    {% for anomaly in anomalies %}
+    {% for anomaly in other_anomalies %}
       <li class="wrap">{{ anomaly.kind or '종류 미기록' }} · {{ anomaly.message }}
         {% for item in anomaly.evidence if item.location %}
           <strong>{{ item.location }}</strong> {{ refs([item.id]) }}
@@ -120,7 +126,7 @@
       </li>
     {% endfor %}
     </ul>
-  {% else %}
+  {% elif not anomalies %}
     <p>기록된 입력 이상이 없습니다.</p>
   {% endif %}
 </section>

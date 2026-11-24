@@ -11,7 +11,7 @@ import triage
 from triage import finals
 from triage.cli import app
 from triage.lookup import LookupResult
-from triage.models import Anomaly, Evidence, Finding, Vulnerability
+from triage.models import Anomaly, Evidence, Finding, Verdict, Vulnerability
 from triage.scope import ScopeResult
 
 
@@ -116,6 +116,49 @@ def test_successful_judge_usage_and_anomalies_reach_artifacts(source, tmp_path):
         report = subprocess.check_output([extract, "-enc", "UTF-8", str(result.paths["report"]), "-"], encoding="utf-8")
         assert message in report
         assert "judge-0001" in report
+
+
+@pytest.mark.parametrize(("mode", "status", "reason", "message"), [
+    ("missing", "degraded", "model_not_configured", "판정 모델이 설정되지 않아 1건 전부 판단 유보로 처리됨"),
+    ("failed", "degraded", "model_calls_failed", "판정 모델 호출에 실패해 1건 전부 판단 유보로 처리됨"),
+    ("mixed", "ok", "model_calls_failed", "판정 모델 호출에 실패해 1건을 판단 유보로 처리했습니다."),
+])
+def test_judge_degradation_reaches_log_and_report(source, tmp_path, monkeypatch, mode, status, reason, message):
+    def lookup(components, **kwargs):
+        findings = [
+            Finding(key="example-pending", component=components[0], vulnerability=Vulnerability(id="TEST-1"),
+                    version_in_range=True),
+        ]
+        if mode == "mixed":
+            findings.append(Finding(key="example-outside", component=components[0],
+                                    vulnerability=Vulnerability(id="TEST-2"), version_in_range=False))
+        return LookupResult(findings, [])
+
+    def failed_calls(findings, *args, **kwargs):
+        findings[0].verdict = Verdict(state="undetermined", decided_by="fallback",
+                                      verifier_notes=["모델 호출 실패: 연결 오류"])
+        for finding in findings[1:]:
+            finding.verdict = Verdict(state="not_affected", decided_by="rule:out_of_range")
+        return findings
+
+    monkeypatch.setattr(finals, "lookup", lookup)
+    monkeypatch.setenv("SBOMTRIAGE_JUDGE", "on")
+    monkeypatch.setenv("SBOMTRIAGE_MODEL", "")
+    monkeypatch.setenv("OPENAI_API_KEY", "")
+    judge = finals.default_judge() if mode == "missing" else failed_calls
+    result = finals.run_scan("degraded", source, tmp_path / "result", offline=True, judge=judge)
+    assert not result.failures
+    assert set(result.paths) == {"sbom", "report", "log"}
+    events = read_log(result.paths["log"])
+    degraded, = [event for event in events if (event["stage"], event["event"]) == ("judge", "degraded")]
+    assert degraded["data"] == {"reason": reason, "fallback_count": 1}
+    assert events[-1]["data"]["status"] == status
+    assert events[-1]["data"]["failed_stages"] == (["judge"] if status == "degraded" else [])
+    warning, = [item for item in result.bundle.anomalies if item.kind == "judge_degraded"]
+    assert warning.message == message
+    if extract := shutil.which("pdftotext"):
+        report = subprocess.check_output([extract, "-enc", "UTF-8", str(result.paths["report"]), "-"], encoding="utf-8")
+        assert message in " ".join(report.split("\f", 1)[0].split())
 
 
 def test_scan_callback_observes_committed_log_records(source, tmp_path):

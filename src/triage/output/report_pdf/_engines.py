@@ -2,8 +2,10 @@
 import os
 import shutil
 import subprocess
+from math import isfinite
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from time import perf_counter
 
 
 _BROWSER_NAMES = ("msedge", "chrome", "google-chrome", "chromium", "chromium-browser")
@@ -14,6 +16,7 @@ _WINDOWS_BROWSERS = (
     ("LOCALAPPDATA", "Google/Chrome/Application/chrome.exe"),
 )
 _UNAVAILABLE = "WeasyPrint 라이브러리와 Edge/Chrome을 찾지 못함"
+_DEFAULT_TIMEOUT = 240.0
 
 
 def _find_browser() -> Path | None:
@@ -41,8 +44,16 @@ def _render_weasyprint(page: str) -> bytes:
     return HTML(string=page, url_fetcher=fetcher).write_pdf(font_config=FontConfiguration())
 
 
-def _print_chromium(page: str, browser: Path, directory: Path) -> bytes:
-    with TemporaryDirectory(prefix=".triage-pdf-", dir=directory) as temporary:
+def _browser_timeout() -> float:
+    try:
+        timeout = float(os.environ.get("SBOMTRIAGE_PDF_TIMEOUT", str(_DEFAULT_TIMEOUT)))
+    except ValueError:
+        return _DEFAULT_TIMEOUT
+    return timeout if isfinite(timeout) and timeout > 0 else _DEFAULT_TIMEOUT
+
+
+def _print_chromium(page: str, browser: Path) -> bytes:
+    with TemporaryDirectory(prefix=".triage-pdf-", ignore_cleanup_errors=True) as temporary:
         root = Path(temporary).resolve()
         html = root / "report.html"
         pdf = root / "report.pdf"
@@ -54,6 +65,10 @@ def _print_chromium(page: str, browser: Path, directory: Path) -> bytes:
                 "--headless=new",
                 "--disable-gpu",
                 "--no-first-run",
+                "--no-default-browser-check",
+                "--disable-sync",
+                "--disable-component-update",
+                "--disable-features=Translate,MediaRouter",
                 "--disable-extensions",
                 "--disable-background-networking",
                 "--allow-file-access-from-files",
@@ -63,7 +78,7 @@ def _print_chromium(page: str, browser: Path, directory: Path) -> bytes:
                 html.as_uri(),
             ],
             check=True,
-            timeout=120,
+            timeout=_browser_timeout(),
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
         )
@@ -73,15 +88,25 @@ def _print_chromium(page: str, browser: Path, directory: Path) -> bytes:
         return content
 
 
-def render_with_engine(page: str, directory: Path) -> tuple[bytes, str]:
+def render_with_engine(page: str) -> tuple[bytes, str, dict[str, float]]:
+    started = perf_counter()
     try:
-        return _render_weasyprint(page), "weasyprint"
-    except (ImportError, OSError):
+        content = _render_weasyprint(page)
+    except (ImportError, OSError) as error:
+        browser_started = perf_counter()
+        weasyprint_seconds = round(browser_started - started, 6)
         browser = _find_browser()
         if browser is None:
-            raise OSError(_UNAVAILABLE) from None
-        directory.mkdir(parents=True, exist_ok=True)
+            raise OSError(f"{_UNAVAILABLE} ({type(error).__name__})") from None
         try:
-            return _print_chromium(page, browser, directory), f"chromium:{browser.name}"
-        except (OSError, subprocess.SubprocessError):
-            raise OSError(f"{_UNAVAILABLE}. 브라우저 인쇄에 실패했습니다.") from None
+            content = _print_chromium(page, browser)
+        except (OSError, subprocess.SubprocessError) as error:
+            raise OSError(f"{_UNAVAILABLE}. 브라우저 인쇄에 실패했습니다 ({type(error).__name__})") from None
+        return content, f"chromium:{browser.name}", {
+            "weasyprint_seconds": weasyprint_seconds,
+            "browser_seconds": round(perf_counter() - browser_started, 6),
+        }
+    return content, "weasyprint", {
+        "weasyprint_seconds": round(perf_counter() - started, 6),
+        "browser_seconds": 0.0,
+    }

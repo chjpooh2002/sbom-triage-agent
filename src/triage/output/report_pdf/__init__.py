@@ -303,8 +303,8 @@ def render_pdf(
     font = (_DIRECTORY / "fonts" / "NotoSansKR.ttf").resolve().as_uri()
     template = (_DIRECTORY / "report.html").read_text(encoding="utf-8")
     page = environment.from_string(template).render(**context, font=font)
-    pdf, engine = render_with_engine(page, out.parent)
+    pdf, engine, timing = render_with_engine(page)
     write_artifact(out, pdf)
     if log is not None:
-        log("pdf", "engine", engine=engine)
+        log("pdf", "engine", engine=engine, **timing)
     return [artifact_evidence("pdf", out, f"한국어 취약점 조치 보고서 생성 ({engine})", bundle)]
