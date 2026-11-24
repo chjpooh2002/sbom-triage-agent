@@ -1,0 +1,39 @@
+# 판정 에이전트(src/triage/judge) 설정. 숫자 기준값은 코드가 아니라 여기 둔다.
+# 단계 스위치는 환경변수로 켠다/끈다: SBOMTRIAGE_JUDGE, SBOMTRIAGE_VERIFY, SBOMTRIAGE_ESCALATE (on|off)
+
+model_call:
+  max_attempts: 3            # 모델 호출 한 번당 최대 시도 횟수(네트워크·서버 오류·형식 오류)
+  backoff_seconds: 1.0       # 재시도 대기 시작값. 시도마다 두 배
+  timeout_seconds: 60        # LLM_TIMEOUT 환경변수가 있으면 그 값을 쓴다
+
+decide:
+  max_tool_calls: 3          # 판정 한 건당 모델이 추가로 부를 수 있는 도구 호출 수
+  workers: 4                 # 동시에 판정하는 후보 수
+  max_symbols_per_item: 4    # 점검 항목 하나에서 미리 검색할 코드 기호 수
+  max_config_keys_per_item: 3
+  max_prompt_evidence_chars: 24000   # 판정 요청에 넣는 증거 본문 상한(넘으면 뒤쪽 생략 표시)
+  max_description_chars: 3000        # 권고문 설명 본문 상한
+
+checklist:
+  max_items: 6               # 점검표 항목 수 상한
+
+escalate:
+  min_deployed_code_evidence: 1      # 배포 파일의 코드 근거가 이만큼 있어야 승급(증거 충분 기준)
+
+explain:
+  plain_ko_max_chars: 160
+
+# 주석·문자열에 들어 있는 "판정 지시처럼 보이는 문구". 근거로 쓰지 않고 Anomaly로 기록한다.
+# 특정 샘플 문구가 아니라 일반적인 표현만 둔다(대소문자 무시 정규식).
+instruction_patterns:
+  - "영향\\s*(없음|없다|없습니다|받지\\s*않)"
+  - "검토\\s*(완료|끝)"
+  - "오탐"
+  - "취약(점)?\\s*(아님|아니다|아닙니다|없음)"
+  - "(무시|제외)\\s*(하세요|해도|할\\s*것|해라|바람)"
+  - "(판정|분류)\\s*(하세요|할\\s*것|해라|바람)"
+  - "false\\s*positive"
+  - "not\\s*(affected|vulnerable|exploitable|reachable)"
+  - "safe\\s*to\\s*ignore"
+  - "ignore\\s+(this|the|all|previous|above)"
+  - "(ai|llm|assistant|reviewer|scanner|모델|에이전트)\\s*(에게|:)"
