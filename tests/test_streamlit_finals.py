@@ -1,9 +1,12 @@
 import importlib
+import inspect
+import json
 import sys
+from datetime import datetime, timezone
 from io import BytesIO
 from pathlib import Path
 from stat import S_IFLNK
-from types import ModuleType
+from types import ModuleType, SimpleNamespace
 from zipfile import ZipFile, ZipInfo
 
 import pytest
@@ -13,6 +16,7 @@ from triage.models import TriageBundle
 
 
 APP = Path(__file__).resolve().parents[1] / "app" / "streamlit_app.py"
+SOURCE = Path(__file__).parent / "fixtures" / "finals" / "streamlit-source"
 
 
 @pytest.fixture
@@ -57,51 +61,132 @@ def test_zip_uses_single_wrapper_as_scan_root(ui, tmp_path):
     assert (root / "file.txt").read_bytes() == b"demo"
 
 
-def submit_server_path(app, tmp_path):
+def submit_server_path(app, root, *, offline=False):
     app.text_input[0].set_value("테스트 서비스")
-    app.text_input[1].set_value(str(tmp_path))
+    app.text_input[1].set_value(str(root))
+    app.tabs[0].checkbox[0].set_value(offline)
     app.button[0].click().run()
 
 
-def test_finals_calls_pipeline_and_keeps_downloads(monkeypatch, tmp_path):
-    calls = []
+def real_backend():
+    try:
+        return importlib.import_module("triage.finals")
+    except ModuleNotFoundError as exc:
+        if exc.name != "triage.finals":
+            raise
+        return None
+
+
+def install_backend(monkeypatch, run_scan, judge=None):
     finals = ModuleType("triage.finals")
-
-    def scan(service, root, out, *, on_event):
-        calls.append((service, root, out))
-        event = {"stage": "collect", "event": "end", "data": {"count": 0}}
-        on_event(event)
-        artifacts = {}
-        for kind, name in (("pdf", "report.pdf"), ("sbom", "sbom.json"), ("log", "log.jsonl")):
-            path = out / name
-            path.write_bytes(b"test download")
-            artifacts[kind] = path
-        return TriageBundle(), artifacts, [event]
-
-    finals.run_scan = scan
+    finals.run_scan = run_scan
+    finals.default_judge = lambda: judge
     monkeypatch.setitem(sys.modules, "triage.finals", finals)
-    app = AppTest.from_file(str(APP), default_timeout=30).run()
+
+
+def event(stage, name, **data):
+    return {"timestamp": datetime.now(timezone.utc).isoformat(), "stage": stage, "event": name, "data": data}
+
+
+def test_finals_calls_pipeline_and_keeps_downloads(monkeypatch, tmp_path):
+    backend = real_backend()
+    signature = inspect.signature(backend.run_scan) if backend else None
+    calls = []
+    judge_provider = object()
+
+    def scan(label, root, out_dir, offline=False, run_no=1, judge=None, on_event=None):
+        if signature is not None and "on_event" in signature.parameters:
+            signature.bind(label, root, out_dir, offline=offline, run_no=run_no, judge=judge, on_event=on_event)
+        calls.append((label, root, out_dir, offline, judge))
+        on_event(event("collect", "end", components=0))
+        on_event(event("judge", "end", verdicts={"affected": 1, "not_affected": 2, "undetermined": 3}))
+        on_event(event("cyclonedx", "end", files=1))
+        on_event(event("pdf", "end", files=1))
+        paths = {}
+        for kind, name in (("report", "report.pdf"), ("sbom", "sbom.json"), ("log", "log.jsonl")):
+            path = out_dir / name
+            path.write_bytes(b"test download")
+            paths[kind] = path
+        return SimpleNamespace(bundle=TriageBundle(), paths=paths, failures={})
+
+    install_backend(monkeypatch, scan, judge=judge_provider)
+    app = AppTest.from_file(str(APP), default_timeout=60).run()
     assert [tab.label for tab in app.tabs] == ["본선 소스 점검", "기존 스캔 결과 분석"]
-    submit_server_path(app, tmp_path)
+    assert app.tabs[0].checkbox[0].value is False
+    submit_server_path(app, tmp_path, offline=True)
     assert not app.exception
     assert not app.error
     assert calls[0][:2] == ("테스트 서비스", tmp_path.resolve())
+    assert calls[0][3:] == (True, judge_provider)
     assert not calls[0][2].exists()
     assert any("구성요소 0건" in item.value for item in app.text)
+    assert any("판정 6건" in item.value for item in app.text)
+    assert any("PDF 보고서 생성 — 완료" in item.value for item in app.text)
     assert len(app.get("download_button")) == 3
     app.run()
     assert len(calls) == 1
     assert len(app.get("download_button")) == 3
 
 
-def test_preview_shows_groups_and_copyable_details(monkeypatch, tmp_path):
+def test_missing_backend_shows_error(monkeypatch):
     monkeypatch.setitem(sys.modules, "triage.finals", None)
-    app = AppTest.from_file(str(APP), default_timeout=30).run()
+    app = AppTest.from_file(str(APP), default_timeout=60).run()
+    assert not app.exception
+    assert app.error[0].value == "점검 실행기를 찾을 수 없습니다"
+    assert not app.get("download_button")
+
+
+def test_partial_failure_keeps_available_downloads(monkeypatch, tmp_path):
+    def scan(label, root, out_dir, *, offline, judge, on_event):
+        on_event(event("pdf", "start"))
+        on_event(event("pdf", "error"))
+        on_event(event("pdf", "end", files=0))
+        log = out_dir / "log.jsonl"
+        log.write_bytes(b"test download")
+        return SimpleNamespace(bundle=TriageBundle(), paths={"log": log}, failures={"pdf": "글꼴 없음"})
+
+    install_backend(monkeypatch, scan)
+    app = AppTest.from_file(str(APP), default_timeout=60).run()
     submit_server_path(app, tmp_path)
     assert not app.exception
     assert not app.error
-    assert any("화면 예시 모드" in warning.value for warning in app.warning)
-    assert len(app.tabs[0].expander) == 3
-    assert any("예시 기능이 켜져 있나요? — 충족" in item.value for item in app.text)
-    assert any("example/settings.toml:4" in item.value for item in app.text)
-    assert any("받는 팀 운영팀" in item.value for item in app.code)
+    assert app.warning[0].value == "일부 단계 실패"
+    assert any("PDF 보고서 생성 · 글꼴 없음" in item.value for item in app.text)
+    assert any("PDF 보고서 생성 — 실패" in item.value for item in app.text)
+    assert len(app.get("download_button")) == 1
+
+
+def test_pipeline_exception_only_displays_type_and_stage(monkeypatch, tmp_path):
+    def scan(label, root, out_dir, *, offline, judge, on_event):
+        on_event(event("lookup", "start"))
+        raise RuntimeError(f"private marker {root}")
+
+    install_backend(monkeypatch, scan)
+    app = AppTest.from_file(str(APP), default_timeout=60).run()
+    submit_server_path(app, tmp_path)
+    assert not app.exception
+    assert [item.value for item in app.error] == ["조회 단계 실패 · 오류 종류 RuntimeError"]
+    assert any("조회 — 실패" in item.value for item in app.text)
+    assert not app.get("download_button")
+
+
+def test_real_offline_scan_fills_all_three_downloads(monkeypatch):
+    backend = real_backend()
+    if backend is None or "on_event" not in inspect.signature(backend.run_scan).parameters:
+        pytest.skip("점검 실행기의 on_event 계약이 아직 반영되지 않았습니다.")
+
+    signature = inspect.signature(backend.run_scan)
+    assert list(signature.parameters) == ["label", "root", "out_dir", "offline", "run_no", "judge", "on_event"]
+    monkeypatch.setattr(backend, "default_judge", lambda: None)
+    app = AppTest.from_file(str(APP), default_timeout=90).run()
+    submit_server_path(app, SOURCE, offline=True)
+    assert not app.exception
+    assert not app.error
+    assert len(app.get("download_button")) == 3
+    _, downloads, failures = app.session_state["finals_result"]
+    assert not failures
+    assert downloads["report"][1].startswith(b"%PDF-")
+    assert json.loads(downloads["sbom"][1])["bomFormat"] == "CycloneDX"
+    log = [json.loads(line) for line in downloads["log"][1].splitlines()]
+    assert {record["stage"] for record in log} >= {"collect", "scope", "lookup", "judge", "cyclonedx", "pdf"}
+    assert any("수집 — 완료" in item.value for item in app.text)

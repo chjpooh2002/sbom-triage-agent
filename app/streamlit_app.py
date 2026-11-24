@@ -15,7 +15,6 @@ import streamlit as st
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
-sys.path.insert(0, str(ROOT / "app"))
 
 from triage.pipeline import run  # noqa: E402
 from triage.report import excel  # noqa: E402
@@ -33,12 +32,12 @@ ZIP_ENTRY_LIMIT = 10_000
 COPY_CHUNK_SIZE = 1024**2
 
 STAGES = {
-    "collect": ("수집", "구성요소"),
-    "scope": ("범위", "배포 확인 대상"),
-    "lookup": ("조회", "취약점 후보"),
-    "judge": ("판정", "판정"),
-    "verify": ("검증", "검증"),
-    "report": ("보고서", "생성 파일"),
+    "collect": ("수집", "구성요소", "components"),
+    "scope": ("범위", "배포 확인 대상 파일", "files"),
+    "lookup": ("조회", "취약점 후보", "candidates"),
+    "judge": ("판정·검증", "판정", "verdicts"),
+    "cyclonedx": ("구성요소 목록 생성", "생성 파일", None),
+    "pdf": ("PDF 보고서 생성", "생성 파일", None),
 }
 GROUPS = {
     "affected": "지금 고칠 것 (영향 있음)",
@@ -46,7 +45,7 @@ GROUPS = {
     "undetermined": "확인이 필요한 것 (판단 유보)",
 }
 DOWNLOADS = {
-    "pdf": ("PDF 보고서", "application/pdf"),
+    "report": ("PDF 보고서", "application/pdf"),
     "sbom": ("구성요소 목록 (SBOM JSON)", "application/json"),
     "log": ("실행 기록 (JSONL)", "application/jsonl"),
 }
@@ -100,11 +99,23 @@ def load_scan():
         if exc.name != "triage.finals":
             raise
         return None
-    return getattr(finals, "run_scan", None)
+    if hasattr(finals, "run_scan") and hasattr(finals, "default_judge"):
+        return finals
+    return None
+
+
+def stage_label(stage: str) -> str:
+    if stage in STAGES:
+        return STAGES[stage][0]
+    return {"download": "내려받기 준비"}.get(stage, "점검 실행")
+
+
+def show_scan_error(stage: str, error: Exception) -> None:
+    st.error(f"{stage_label(stage)} 단계 실패 · 오류 종류 {type(error).__name__}")
 
 
 def show_progress(slots, stages) -> None:
-    for stage, (label, unit) in STAGES.items():
+    for stage, (label, unit, _) in STAGES.items():
         status, count = stages.get(stage, ("대기", None))
         suffix = f" · {unit} {count}건" if count is not None else ""
         slots[stage].text(f"{label} — {status}{suffix}")
@@ -116,7 +127,14 @@ def update_stage(stages, record) -> None:
     if stage not in STAGES or event not in ("start", "end", "error"):
         return
     status = {"start": "진행 중", "end": "완료", "error": "실패"}[event]
-    count = record.get("data", {}).get("count")
+    data = record.get("data", {})
+    if data.get("status") in ("error", "failed") or (
+        event == "end" and stages.get(stage, ("", None))[0] == "실패"
+    ):
+        status = "실패"
+    count = data.get(STAGES[stage][2])
+    if stage == "judge" and isinstance(count, Mapping):
+        count = sum(value for value in count.values() if type(value) is int and value >= 0)
     stages[stage] = (status, count if type(count) is int and count >= 0 else None)
 
 
@@ -216,7 +234,11 @@ def show_detail(finding, evidence, remediation, checklist) -> None:
                            *request.branches]), language=None)
 
 
-def show_results(bundle, downloads) -> None:
+def show_results(bundle, downloads, failures) -> None:
+    if failures:
+        st.warning("일부 단계 실패")
+        for stage, reason in failures.items():
+            st.text(f"{stage_label(stage)} · {reason}")
     groups = final_groups(bundle)
     st.subheader("먼저 고칠 것 3개")
     if not groups["affected"]:
@@ -251,9 +273,14 @@ def show_results(bundle, downloads) -> None:
 def finals_screen() -> None:
     st.title("소스 코드 보안 점검")
     st.caption("소스에서 사용 중인 구성요소를 찾고, 서비스에 영향이 있는지 확인합니다.")
-    scan = load_scan()
-    if scan is None:
-        st.warning("화면 예시 모드입니다. 입력을 실제로 점검하지 않으며 결과와 파일은 예시입니다.")
+    try:
+        finals = load_scan()
+    except Exception as exc:
+        show_scan_error("run", exc)
+        return
+    if finals is None:
+        st.error("점검 실행기를 찾을 수 없습니다")
+        return
     with st.form("finals_input"):
         service = st.text_input("서비스 이름")
         upload = st.file_uploader(
@@ -261,6 +288,7 @@ def finals_screen() -> None:
             max_upload_size=ZIP_UPLOAD_MIB,
         )
         server_path = st.text_input("또는 서버의 소스 폴더 경로")
+        offline = st.checkbox("오프라인 실행 (저장된 조회 결과만 사용)", value=False)
         submitted = st.form_submit_button("점검 시작", type="primary")
 
     st.subheader("진행 상황")
@@ -273,7 +301,16 @@ def finals_screen() -> None:
         st.session_state["finals_stages"] = stages
     show_progress(slots, stages)
 
+    active_stage = "run"
+
     def on_event(record):
+        nonlocal active_stage
+        stage = record.get("stage")
+        event = record.get("event")
+        if stage not in STAGES or event not in ("start", "end", "error"):
+            return
+        if event in ("start", "error"):
+            active_stage = stage
         update_stage(stages, record)
         show_progress(slots, stages)
 
@@ -306,27 +343,39 @@ def finals_screen() -> None:
             out.mkdir()
             with st.spinner("점검 중…"):
                 try:
-                    if scan is None:
-                        from finals_preview import preview_scan
+                    active_stage = "judge"
+                    judge = finals.default_judge()
+                    active_stage = "run"
+                    result = finals.run_scan(
+                        service, root, out, offline=offline, judge=judge, on_event=on_event,
+                    )
+                except Exception as exc:
+                    if active_stage in STAGES:
+                        stages[active_stage] = ("실패", None)
+                    show_progress(slots, stages)
+                    show_scan_error(active_stage, exc)
+                    return
 
-                        scan = preview_scan
-                    # 본선 통합 계약: (TriageBundle, 산출물 경로 매핑, JSONL 이벤트 목록).
-                    bundle, artifacts, events = scan(service, root, out, on_event=on_event)
-                    for event in events:
-                        update_stage(stages, event)
-                    downloads = {}
-                    for kind in DOWNLOADS.keys() & artifacts.keys():
-                        path = (out / artifacts[kind]).resolve(strict=True)
-                        if not path.is_relative_to(out.resolve()):
-                            raise ValueError("산출물 경로가 출력 폴더를 벗어납니다.")
-                        downloads[kind] = (path.name, path.read_bytes())
-                    st.session_state["finals_result"] = (bundle, downloads)
-                except Exception:
-                    for stage, (status, _) in stages.items():
-                        if status == "진행 중":
-                            stages[stage] = ("실패", None)
-                    st.error("점검을 완료하지 못했습니다. 서버에서 점검 실행 설정을 확인해 주세요.")
-                show_progress(slots, stages)
+            from triage.output._redact import Redactor
+
+            redactor = Redactor((str(root), str(temporary)))
+            failures = {stage: redactor.text(reason) for stage, reason in result.failures.items()}
+            for stage in failures.keys() & STAGES.keys():
+                stages[stage] = ("실패", stages.get(stage, ("", None))[1])
+            downloads = {}
+            for kind in DOWNLOADS.keys() & result.paths.keys():
+                try:
+                    path = (out / result.paths[kind]).resolve(strict=True)
+                    if not path.is_relative_to(out.resolve()):
+                        raise ValueError("산출물 경로가 출력 폴더를 벗어납니다.")
+                    downloads[kind] = (path.name, path.read_bytes())
+                except (OSError, ValueError, RuntimeError) as exc:
+                    show_scan_error("download", exc)
+            for stage, kind in (("cyclonedx", "sbom"), ("pdf", "report")):
+                if kind in downloads and stage not in failures and stages.get(stage) == ("완료", None):
+                    stages[stage] = ("완료", 1)
+            show_progress(slots, stages)
+            st.session_state["finals_result"] = (result.bundle, downloads, failures)
 
     if result := st.session_state.get("finals_result"):
         show_results(*result)
