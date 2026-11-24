@@ -4,6 +4,8 @@ from shutil import copyfile
 from types import SimpleNamespace
 from zipfile import ZipFile
 
+import pytest
+
 from triage.collect import CollectResult, collect, maven, syft
 
 FIX = Path(__file__).parent / "fixtures/finals/collect"
@@ -78,7 +80,8 @@ def test_python_directness_ranges_and_lock_disagreement():
     assert len(comps) == len(result.components) == 6
     assert comps["vial-meter"].version == "3.3.0" and comps["vial-meter"].declared_spec == "==3.2.1"
     assert comps["amber-kite"].version == "0.8.2" and comps["amber-kite"].version_source == "manifest_pinned"
-    assert comps["plain-ring"].version == "" and comps["plain-ring"].direct is None
+    assert comps["plain-ring"].version == "" and comps["plain-ring"].direct is True
+    assert comps["amber-kite"].direct is True and comps["vial-meter"].direct is True
     assert comps["thin-lens"].direct is True and comps["thin-lens"].version == "4.1.0"
     assert comps["blue-spline"].direct is None
     assert comps["blue-spline"].scope == comps["wax-finch"].scope == "dev"
@@ -86,20 +89,30 @@ def test_python_directness_ranges_and_lock_disagreement():
     assert [a.kind for a in result.anomalies] == ["lock_mismatch"]
 
 
-def test_maven_remote_parent_bom_cache_and_property_override(tmp_path, monkeypatch):
+@pytest.fixture
+def central(tmp_path, monkeypatch):
     urls = []
+
     def download(url):
         urls.append(url)
-        name = url.split("/")[-3]
+        name, version = url.split("/")[-3:-1]
+        assert url == f"{maven.CENTRAL}/org/fixture/{name}/{version}/{name}-{version}.pom"
+        if name in {"bearing", "sleeve", "released", "flat"}:
+            text = (FIX / "central/leaf.pom").read_text(encoding="utf-8")
+            return text.replace("ARTIFACT", name).replace("VERSION", version)
         return (FIX / "central" / (name + ".pom")).read_text(encoding="utf-8")
 
     monkeypatch.setattr(maven, "CACHE", tmp_path)
     monkeypatch.setattr(maven, "download", download)
+    return urls
+
+
+def test_maven_remote_parent_bom_cache_and_property_override(tmp_path, monkeypatch, central):
     root = FIX / "maven"
     result = collect(root)
     refs = verify(result, root)
-    assert result.anomalies == []
-    assert len(urls) == len(list(tmp_path.rglob("*.pom"))) == 2
+    assert [a.kind for a in result.anomalies] == ["unresolved_dependency"]
+    assert len(central) == len(list(tmp_path.rglob("*.pom"))) == 5
     deps = {(c.module, c.name): c for c in result.components}
     assert len(deps) == 4
     wheel = deps["wheel", "bearing"]
@@ -120,8 +133,84 @@ def test_maven_unavailable_leaves_version_unknown(tmp_path, monkeypatch):
     monkeypatch.setattr(maven, "CACHE", tmp_path)
     monkeypatch.setattr(maven, "download", unavailable)
     result = collect(FIX / "maven")
-    assert {a.kind for a in result.anomalies} == {"unresolved_pom"}
+    assert {a.kind for a in result.anomalies} == {"unresolved_pom", "unresolved_dependency"}
     assert all(not c.version and c.version_source == "unknown" for c in result.components)
+
+
+def test_maven_managed_transitives_and_nearest_winner(central, monkeypatch):
+    root = FIX / "maven-graph"
+    result = collect(root)
+    refs = verify(result, root)
+    assert not result.anomalies
+    for module, bearing_version in (("gearbox", "2.4.0"), ("adjusted", "2.9.0")):
+        deps = {c.name: c for c in result.components if c.module == module}
+        assert {c.name for c in deps.values() if c.direct} == {"rotor", "shaft"}
+        assert all(c.direct is False for c in deps.values() if c.name not in {"rotor", "shaft"})
+        sleeve = deps["sleeve"]
+        assert (sleeve.version, sleeve.declared_spec, sleeve.version_source) == ("1.7.1", "0.1", "managed")
+        assert any(refs[r].url.endswith("/metal-bom-2.0.pom") for r in sleeve.evidence_ids)
+        assert any(refs[r].url.endswith("/rotor-1.0.pom") for r in sleeve.evidence_ids)
+        bearing = deps["bearing"]
+        assert bearing.version == bearing_version
+        assert deps["rotor"].depends_on == [sleeve.id, bearing.id, deps["bridge"].id]
+        if module == "adjusted":
+            assert bearing.version_source == "property_override"
+            assert any(refs[r].file == "adjusted/pom.xml" and "2.9.0" in refs[r].snippet for r in bearing.evidence_ids)
+        assert deps["flat"].version == "4.0"
+        assert deps["flat"].id in deps["shaft"].depends_on and deps["flat"].id in deps["bridge"].depends_on
+        assert deps["released"].id in deps["bridge"].depends_on
+        assert {"blind", "accessory", "gauge"}.isdisjoint(deps)
+    assert len(set(central)) == len(central)
+    assert not any(url.endswith(("flat-8.0.pom", "sleeve-0.1.pom", "bearing-1.3.pom")) for url in central)
+    monkeypatch.setattr(maven, "download", lambda _: pytest.fail("오프라인 재실행에서 네트워크 호출"))
+    assert collect(root) == result
+
+
+def test_maven_equal_depth_loser_does_not_reopen_excluded_children(central, monkeypatch):
+    download = maven.download
+
+    def alternate_version(url):
+        text = download(url)
+        if url.endswith("/shaft-1.0.pom"):
+            return text.replace("<artifactId>bridge</artifactId><version>1.0", "<artifactId>bridge</artifactId><version>2.0")
+        return text
+
+    monkeypatch.setattr(maven, "download", alternate_version)
+    result = collect(FIX / "maven-graph")
+    assert not result.anomalies
+    components = {c.name: c for c in result.components if c.module == "gearbox"}
+    bridge = components["bridge"]
+    assert bridge.version == "1.0" and bridge.id in components["shaft"].depends_on
+    assert "released" not in components
+    assert not any(url.endswith("/bridge-2.0.pom") for url in central)
+
+
+@pytest.mark.parametrize("limits", [maven.Limits(1, 100, 100), maven.Limits(8, 1, 100), maven.Limits(8, 100, 2)])
+def test_maven_limits_preserve_direct_inventory(central, monkeypatch, limits):
+    monkeypatch.setattr(maven, "load_limits", lambda: limits)
+    root = FIX / "maven-graph"
+    result = collect(root)
+    verify(result, root)
+    assert {c.name for c in result.components} == {"rotor", "shaft"}
+    assert len(central) <= limits.max_poms
+    assert any(a.kind == "maven_limit" for a in result.anomalies)
+
+
+def test_maven_unavailable_descriptor_records_url_and_preserves_siblings(central, monkeypatch):
+    download = maven.download
+
+    def unavailable(url):
+        if url.endswith("rotor-1.0.pom"):
+            raise OSError("offline")
+        return download(url)
+
+    monkeypatch.setattr(maven, "download", unavailable)
+    root = FIX / "maven-graph"
+    result = collect(root)
+    refs = verify(result, root)
+    failure = next(a for a in result.anomalies if a.kind == "unresolved_pom")
+    assert any(refs[r].url.endswith("rotor-1.0.pom") for r in failure.evidence_ids)
+    assert any(c.name == "flat" and c.direct is False for c in result.components)
 
 
 def test_docker_stages_and_floating_release_lines():

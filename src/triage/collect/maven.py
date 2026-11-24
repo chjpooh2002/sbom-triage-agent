@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import os
 import re
+import tomllib
 from dataclasses import dataclass
 from pathlib import Path
 from tempfile import NamedTemporaryFile
@@ -12,6 +13,7 @@ from xml.parsers import expat
 import httpx
 
 from .core import Document, SourceLine, safe_file
+from .maven_graph import Dependency, Limits, collect_module
 
 CACHE = Path(__file__).resolve().parents[3] / "data/cache/maven"
 CENTRAL = "https://repo.maven.apache.org/maven2"
@@ -119,12 +121,40 @@ def download(url):
     return response.content.decode("utf-8-sig")
 
 
+def load_limits():
+    settings = Path(__file__).with_name("maven_limits.toml").read_text(encoding="utf-8")
+    return Limits(**tomllib.loads(settings))
+
+
 class Repository:
     def __init__(self, ctx, local):
         self.ctx = ctx
         self.local = {pom.gav: pom for pom in local}
         self.paths = {pom.path: pom for pom in local}
         self.external = {}
+        self.models = {}
+        self.bom_management = {}
+        self.graph_states = 0
+        self.limit_reports = set()
+        self.limits = load_limits()
+
+    def limit(self, kind, message, ref):
+        if kind not in self.limit_reports:
+            self.limit_reports.add(kind)
+            self.ctx.anomaly("maven_limit", message, ref)
+
+    def model(self, pom):
+        if pom.doc.file not in self.models:
+            chain = self.lineage(pom)
+            props = properties(chain)
+            declarations = {}
+            for owner in reversed(chain):
+                for dep in owner.root.findall("dependencies/dependency"):
+                    declarations.setdefault(dependency_key(owner, dep, props), (owner, dep))
+            managed = management(self, chain, {pom.doc.file})
+            parents = tuple(p.ref(p.root.find("parent")) for p in chain if p.root.find("parent") is not None)
+            self.models[pom.doc.file] = Model(props, declarations, managed, parents)
+        return self.models[pom.doc.file]
 
     def lookup(self, gav, ref):
         if gav in self.local:
@@ -132,7 +162,10 @@ class Repository:
         if gav in self.external:
             return self.external[gav]
         if not valid_coord(gav):
-            self.ctx.anomaly("unresolved_pom", "부모 또는 BOM 좌표를 확인할 수 없습니다.", ref)
+            self.ctx.anomaly("unresolved_pom", f"POM 좌표를 확인할 수 없습니다 ({':'.join(gav)}).", ref)
+            return None
+        if len(self.external) >= self.limits.max_poms:
+            self.limit("poms", f"외부 POM {self.limits.max_poms}개 상한에 도달해 추가 조회를 생략했습니다.", ref)
             return None
         group, artifact, version = gav
         rel = f"{group.replace('.', '/')}/{artifact}/{version}/{artifact}-{version}.pom"
@@ -159,7 +192,9 @@ class Repository:
             self.external[gav] = pom
             self.ctx.event("maven.resolved", url=url, cached=cached)
         except (httpx.HTTPError, OSError, ValueError, expat.ExpatError):
-            self.ctx.anomaly("unresolved_pom", "부모 또는 BOM POM을 읽지 못했습니다.", ref)
+            failed = self.ctx.evidence(Document("data/cache/maven/" + rel, "", "manifest", url), None,
+                                       note="POM 조회 또는 해석 실패")
+            self.ctx.anomaly("unresolved_pom", f"POM을 읽지 못했습니다 ({':'.join(gav)}).", ref, failed)
         return self.external[gav]
 
     def lineage(self, pom):
@@ -197,6 +232,13 @@ def dependency_key(pom, entry, props):
 class Managed:
     version: Value
     scope: Value
+    optional: Value
+    exclusions: frozenset
+
+
+def exclusions(pom, dep, props):
+    return frozenset((field(pom, row, "groupId", props).text, field(pom, row, "artifactId", props).text)
+                     for row in dep.findall("exclusions/exclusion"))
 
 
 def management(repo, chain, active):
@@ -214,19 +256,70 @@ def management(repo, chain, active):
                 ref = pom.ref(dep)
                 bom = repo.lookup((*key[:2], version.text), ref)
                 if bom and bom.doc.file not in active:
-                    imported = management(repo, repo.lineage(bom), active | {bom.doc.file})
+                    if bom.doc.file not in repo.bom_management:
+                        repo.bom_management[bom.doc.file] = management(repo, repo.lineage(bom), active | {bom.doc.file})
+                    imported = repo.bom_management[bom.doc.file]
                     for coord, managed in imported.items():
                         source = managed.version
                         value = Value(source.text, (ref, *version.refs, *source.refs), source.override)
-                        imports.setdefault(coord, Managed(value, managed.scope))
+                        imports.setdefault(coord, Managed(value, managed.scope, managed.optional, managed.exclusions))
                 elif bom:
                     ctx.anomaly("pom_cycle", "BOM 순환 참조입니다.", ref)
             else:
-                explicit[key] = Managed(version, scope)
+                explicit[key] = Managed(version, scope, field(pom, dep, "optional", props), exclusions(pom, dep, props))
         for key, value in imports.items():
             result.setdefault(key, value)
         result.update(explicit)
     return result
+
+
+@dataclass
+class Model:
+    props: dict
+    declarations: dict
+    managed: dict
+    parent_refs: tuple
+
+    def dependencies(self, project_management):
+        for key, (owner, dep) in self.declarations.items():
+            version = field(owner, dep, "version", self.props)
+            scope = field(owner, dep, "scope", self.props)
+            optional = field(owner, dep, "optional", self.props)
+            excluded = exclusions(owner, dep, self.props)
+            source = "manifest_pinned"
+            local = self.managed.get(key)
+            if local:
+                if not version.text:
+                    version, source = local.version, "managed"
+                if not scope.text:
+                    scope = local.scope
+                if not optional.text:
+                    optional = local.optional
+                excluded |= local.exclusions
+            # 게시 POM의 test/provided/optional 자식은 소비자의 버전 관리 대상에 들어오기 전에 제외한다.
+            if project_management is not None and (scope.text in {"test", "provided", "system"} or optional.text.lower() == "true"):
+                continue
+            project = project_management.get(key) if project_management is not None else None
+            if project:
+                if project.version.text:
+                    version, source = project.version, "managed"
+                if project.scope.text:
+                    scope = project.scope
+                if project.optional.text:
+                    optional = project.optional
+                excluded |= project.exclusions
+            if version.override:
+                source = "property_override"
+            actual = version.text
+            if not actual or PROPERTY.search(actual) or actual in ("RELEASE", "LATEST"):
+                actual, source = "", "unknown"
+            elif actual.startswith(("[", "(")):
+                actual, source = "", "manifest_range"
+            refs = (owner.ref(dep), *field(owner, dep, "groupId", self.props).refs,
+                    *field(owner, dep, "artifactId", self.props).refs, *version.refs, *scope.refs,
+                    *optional.refs, *self.parent_refs)
+            yield Dependency(key, actual, source, dep.findtext("version", ""), scope.text or "compile",
+                             optional.text.lower(), excluded, refs)
 
 
 def collect_maven(ctx, paths):
@@ -254,47 +347,4 @@ def collect_maven(ctx, paths):
                 ctx.anomaly("unresolved_module", "선언한 모듈의 POM을 확인할 수 없습니다.", pom.ref(module))
     repo = Repository(ctx, poms)
     for pom in poms:
-        chain = repo.lineage(pom)
-        props = properties(chain)
-        managed = management(repo, chain, {pom.doc.file})
-        dependencies = {}
-        for owner in chain:
-            for dep in owner.root.findall("dependencies/dependency"):
-                key = dependency_key(owner, dep, props)
-                dependencies[key] = (owner, dep)
-        for key, (owner, dep) in dependencies.items():
-            group, name, typ, classifier = key
-            if not name or PROPERTY.search(name):
-                ctx.anomaly("unresolved_dependency", "Maven 의존성 이름을 확인할 수 없습니다.", owner.ref(dep))
-                continue
-            explicit = field(owner, dep, "version", props)
-            scope = field(owner, dep, "scope", props)
-            version = explicit
-            source = "manifest_pinned"
-            if key in managed:
-                if not version.text:
-                    version = managed[key].version
-                    source = "managed"
-                if not scope.text:
-                    scope = managed[key].scope
-            if version.override:
-                source = "property_override"
-            actual = version.text
-            if not actual or PROPERTY.search(actual) or actual in ("RELEASE", "LATEST"):
-                actual, source = "", "unknown"
-            elif actual.startswith(("[", "(")):
-                actual, source = "", "manifest_range"
-            module = pom.path.parent.relative_to(ctx.root).as_posix()
-            refs = [owner.ref(dep), *field(owner, dep, "artifactId", props).refs,
-                    *field(owner, dep, "groupId", props).refs, *version.refs, *scope.refs]
-            refs.extend(p.ref(p.root.find("parent")) for p in chain if p.root.find("parent") is not None)
-            scope_name = {"": "runtime", "compile": "runtime", "runtime": "runtime", "test": "test",
-                          "provided": "build_only", "system": "build_only"}.get(scope.text, "unknown")
-            optional = field(owner, dep, "optional", props)
-            if optional.text == "true":
-                refs.extend(optional.refs)
-                scope_name = "optional"
-            ctx.add(group="" if PROPERTY.search(group) else group, name=name, ecosystem="maven", version=actual,
-                    version_source=source, declared_spec=dep.findtext("version", ""), direct=True, scope=scope_name,
-                    module=pom.gav[1] if module == "." else module, discovered_by="maven", evidence_ids=refs,
-                    sources=[owner.doc.file, pom.doc.file], location=f"{module}/{typ}" + (f"/{classifier}" if classifier else ""))
+        collect_module(repo, pom)

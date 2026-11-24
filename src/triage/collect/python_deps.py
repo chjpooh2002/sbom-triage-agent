@@ -183,7 +183,6 @@ def collect_python(ctx, folder, files):
         for declaration in [*other, *reqs]:
             by_name[declaration.name].append(declaration)
         locked_names = {dep.name for dep in locked}
-        direct_refs = {r.ref for r in other}
         for dep in locked:
             declarations = by_name[dep.name]
             refs = [dep.ref, *[r.ref for r in declarations]]
@@ -193,7 +192,7 @@ def collect_python(ctx, folder, files):
                     ctx.anomaly("lock_mismatch", f"{r.name} 명세 {r.spec}와 잠금 버전 {dep.version}이 다릅니다.", r.ref, dep.ref)
             ctx.add(name=dep.name, ecosystem="pypi", version=dep.version, scope=dep.scope, discovered_by=flavor,
                     version_source="lockfile" if dep.version else "unknown", declared_spec=declarations[0].spec if declarations else "",
-                    direct=True if any(r.ref in direct_refs for r in declarations) else None, module="" if module == "." else module,
+                    direct=True if declarations else None, module="" if module == "." else module,
                     evidence_ids=refs, sources=[dep.file, *[r.file for r in declarations]], location=dep.file)
         for r in other:
             if r.name not in locked_names:
@@ -201,6 +200,6 @@ def collect_python(ctx, folder, files):
                 reqs.append(r)
     for r in reqs:
         if r.ref not in matched:
-            ctx.add(name=r.name, ecosystem="pypi", version=r.version, scope=r.scope, declared_spec=r.spec,
+            ctx.add(name=r.name, ecosystem="pypi", version=r.version, scope=r.scope, declared_spec=r.spec, direct=True,
                     version_source="manifest_pinned" if r.version else "manifest_range", discovered_by="requirements",
                     module="" if module == "." else module, evidence_ids=[r.ref], sources=[r.file], location=r.file)
