@@ -1,0 +1,44 @@
+{
+  "components": [
+    {
+      "id": "pkg:pypi/fixture-parser@1.0",
+      "purl": "pkg:pypi/fixture-parser@1.0",
+      "name": "fixture-parser",
+      "version": "1.0",
+      "version_source": "manifest_pinned",
+      "scope": "runtime",
+      "deployed": "yes",
+      "direct": true,
+      "licenses": ["MIT"],
+      "depends_on": ["pkg:pypi/fixture-helper@2.0"],
+      "evidence_ids": ["collect-0001"]
+    },
+    {
+      "id": "pkg:pypi/fixture-helper@2.0",
+      "purl": "pkg:pypi/fixture-helper@2.0",
+      "name": "fixture-helper",
+      "version": "2.0",
+      "scope": "test",
+      "deployed": "no",
+      "direct": false,
+      "module": "fixtures"
+    }
+  ],
+  "evidence": [
+    {
+      "id": "collect-0001",
+      "kind": "manifest",
+      "file": "requirements-fixture.txt",
+      "line_start": 1,
+      "line_end": 2,
+      "note": "점검 대상 버전을 확인했습니다."
+    },
+    {
+      "id": "evidence-0001",
+      "kind": "config",
+      "file": "app-settings.json",
+      "line_start": 3,
+      "snippet": "fixture_mode = true"
+    }
+  ]
+}
