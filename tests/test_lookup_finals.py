@@ -8,12 +8,16 @@ from pathlib import Path
 import httpx
 import pytest
 
+from triage.collect import collect
 from triage.lookup import LookupResult, lookup
 from triage.lookup import _http
 from triage.models import Component, Status
 
 LOOKUP = importlib.import_module("triage.lookup")
 FIXTURE = Path(__file__).parent / "fixtures" / "finals" / "lookup.json"
+OPENJDK = "cpe:2.3:a:oracle:openjdk"
+TEMURIN = "cpe:2.3:a:eclipse:temurin"
+CORRETTO = "cpe:2.3:a:amazon:corretto"
 
 
 @pytest.fixture
@@ -27,6 +31,7 @@ def setup(monkeypatch, tmp_path):
     cache = tmp_path / "lookup"
     monkeypatch.setattr(LOOKUP, "CACHE_DIR", cache)
     monkeypatch.setenv("TRIAGE_CACHE_DIR", str(intel))
+    monkeypatch.delenv("NVD_API_KEY", raising=False)
     client_type = httpx.Client
 
     def transport(handler):
@@ -175,3 +180,158 @@ def test_missing_osv_detail_remains_candidate_and_uses_stale_batch(setup, monkey
     fallback = lookup([component])
     assert fallback.findings == initial.findings
     assert lookup([component], offline=True).findings == initial.findings
+
+
+def _nvd_cve(number, product, version="*", score=None, **bounds):
+    cve = {
+        "id": f"CVE-2099-{number}",
+        "configurations": [{"nodes": [{"operator": "OR", "cpeMatch": [{
+            "criteria": f"{product}:{version}:*:*:*:*:*:*:*", "vulnerable": True, **bounds,
+        }]}]}],
+    }
+    if score is not None:
+        cve["metrics"] = {"cvssMetricV31": [{"type": "Primary", "cvssData": {"baseScore": score}}]}
+    return cve
+
+
+def _nvd_response(cves, **page):
+    return httpx.Response(200, json={"vulnerabilities": [{"cve": cve} for cve in cves], **page})
+
+
+def test_jre_release_line_combines_collected_runtime_and_base_image(setup):
+    _, _, transport = setup
+    collected = collect(FIXTURE.parent / "lookup-java")
+    runtime = next(component for component in collected.components if component.kind == "runtime")
+    image = next(component for component in collected.components if component.kind == "base-image")
+    assert (runtime.name, runtime.version, image.name) == ("jre", "11", "eclipse-temurin")
+    queries = []
+
+    def handle(request):
+        product = request.url.params["virtualMatchString"]
+        queries.append(product)
+        if product == OPENJDK:
+            return _nvd_response([
+                _nvd_cve(1101, OPENJDK, "11.0.4"),
+                _nvd_cve(1102, OPENJDK, "17.0.1"),
+                _nvd_cve(1103, OPENJDK, versionEndExcluding="11.0.0"),
+                _nvd_cve(1104, OPENJDK, versionStartIncluding="12.0.0"),
+            ])
+        if product == TEMURIN:
+            return _nvd_response([
+                _nvd_cve(1101, TEMURIN, "11.0.5"),
+                _nvd_cve(1105, TEMURIN, versionEndIncluding="11.0.0"),
+            ])
+        assert product == CORRETTO
+        return _nvd_response([])
+
+    transport(handle)
+    result = lookup(collected.components)
+    assert sorted(queries) == sorted([OPENJDK, TEMURIN, CORRETTO])
+    assert [finding.vulnerability.id for finding in result.findings] == ["CVE-2099-1101", "CVE-2099-1105"]
+    assert all(finding.component.id == runtime.id and finding.version_in_range is None for finding in result.findings)
+    merged = result.findings[0]
+    assert set(merged.vulnerability.affected_ranges) == {"==11.0.4", "==11.0.5"}
+    notes = {item.note for item in result.evidence if item.id in merged.hints["evidence_ids"]}
+    assert f"NVD CVE-2099-1101, 제품 CPE {OPENJDK}" in notes
+    assert f"NVD CVE-2099-1101, 제품 CPE {TEMURIN}" in notes
+
+    standalone = lookup([image], offline=True)
+    assert [finding.vulnerability.id for finding in standalone.findings] == ["CVE-2099-1101", "CVE-2099-1105"]
+    assert all(finding.component.id == image.id and finding.version_in_range is None for finding in standalone.findings)
+
+
+def test_jdk_pinned_version_still_gets_boolean_range_results(setup):
+    _, _, transport = setup
+    jdk = Component(id="java-pinned", kind="runtime", name="jdk", version="11.0.5")
+
+    def handle(request):
+        product, version = request.url.params["virtualMatchString"].rsplit(":", 1)
+        assert product in (OPENJDK, TEMURIN, CORRETTO) and version == "11.0.5"
+        return _nvd_response([
+            _nvd_cve(1106, product, versionStartIncluding="11.0.1", versionEndIncluding="11.0.5"),
+            _nvd_cve(1107, product, versionEndExcluding="11.0.5"),
+        ])
+
+    transport(handle)
+    results = {f.vulnerability.id: f.version_in_range for f in lookup([jdk]).findings}
+    assert results == {"CVE-2099-1106": True, "CVE-2099-1107": False}
+
+
+def test_python_minor_line_limits_distinct_candidates_by_cvss(setup):
+    _, _, transport = setup
+    python = Component(id="python-line", name="python", kind="runtime", version="3.11")
+    product = "cpe:2.3:a:python:python"
+    cves = [_nvd_cve(1200 + i, product, "3.11.2", score=i / 10) for i in range(52)]
+    cves.append(_nvd_cve(1300, product, "3.12.0", score=10))
+    events = []
+
+    def handle(request):
+        assert request.url.params["virtualMatchString"] == product
+        return _nvd_response([*cves, cves[20]])
+
+    transport(handle)
+    result = lookup([python], log=lambda stage, event, **data: events.append((stage, event, data)))
+    assert [f.vulnerability.id for f in result.findings] == [f"CVE-2099-{i}" for i in range(1251, 1201, -1)]
+    assert all(f.version_in_range is None for f in result.findings)
+    assert ("lookup", "candidates_truncated", {"source": "nvd", "component_id": python.id,
+            "total": 52, "kept": 50, "dropped": 2}) in events
+    note = next(item for item in result.evidence if "52건 중 CVSS 상위 50건" in item.note)
+    assert all(note.id in f.hints["evidence_ids"] for f in result.findings)
+
+
+def test_nvd_rate_limited_responses_wait_then_retry_without_key(setup, monkeypatch):
+    fixture, _, transport = setup
+    runtime = Component(id="node-line", kind="runtime", name="node", version="20")
+    delays, events, attempts = [], [], []
+    monkeypatch.setattr(_http.time, "sleep", delays.append)
+
+    def handle(request):
+        assert "apiKey" not in request.headers
+        attempts.append(request)
+        if len(attempts) == 1:
+            return httpx.Response(429, headers={"Retry-After": "7"})
+        if len(attempts) == 2:
+            return httpx.Response(403, headers={"message": "Forbidden by Administrative Rules"})
+        return _nvd_response([fixture["nvd"]])
+
+    transport(handle)
+    result = lookup([runtime], log=lambda stage, event, **data: events.append((event, data)))
+    assert len(result.findings) == 1 and len(attempts) == 3
+    assert delays == [7, 30]
+    assert [(data["status"], data["seconds"]) for event, data in events if event == "rate_limit_wait"] == [(429, 7), (403, 30)]
+
+
+@pytest.mark.parametrize("key", [None, "fixture-only-nvd-key"])
+def test_nvd_request_window_and_key_independent_cache(setup, monkeypatch, key):
+    fixture, cache, transport = setup
+    if key:
+        monkeypatch.setenv("NVD_API_KEY", key)
+    runtime = Component(id="node", kind="runtime", name="node", version="20.1.0")
+    clock = 0.0
+    calls, delays, events = [], [], []
+
+    def sleep(seconds):
+        nonlocal clock
+        delays.append(seconds)
+        clock += seconds
+
+    monkeypatch.setattr(_http, "monotonic", lambda: clock)
+    monkeypatch.setattr(_http.time, "sleep", sleep)
+
+    def handle(request):
+        assert request.headers.get("apiKey") == key
+        offset = int(request.url.params["startIndex"])
+        calls.append(offset)
+        cve = dict(fixture["nvd"], id=f"CVE-2099-{1400 + offset}")
+        return _nvd_response([cve], resultsPerPage=1, totalResults=6)
+
+    transport(handle)
+    result = lookup([runtime], log=lambda stage, event, **data: events.append((event, data)))
+    assert calls == list(range(6)) and len(result.findings) == 6
+    assert delays == ([] if key else [30])
+    assert [data["reason"] for event, data in events if event == "rate_limit_wait"] == ([] if key else ["window"])
+    if key:
+        assert key not in str(events)
+        assert all(key not in path.read_text(encoding="utf-8") for path in cache.glob("*/*.json"))
+    monkeypatch.delenv("NVD_API_KEY", raising=False)
+    assert lookup([runtime], offline=True).findings == result.findings
