@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from io import BytesIO
 from pathlib import Path
 from stat import S_IFLNK
+from threading import Event, get_ident
 from types import ModuleType, SimpleNamespace
 from zipfile import ZipFile, ZipInfo
 
@@ -190,3 +191,51 @@ def test_real_offline_scan_fills_all_three_downloads(monkeypatch):
     log = [json.loads(line) for line in downloads["log"][1].splitlines()]
     assert {record["stage"] for record in log} >= {"collect", "scope", "lookup", "judge", "cyclonedx", "pdf"}
     assert any("수집 — 완료" in item.value for item in app.text)
+
+def test_action_cards_search_details_and_threaded_progress(monkeypatch, tmp_path):
+    from streamlit.delta_generator import DeltaGenerator
+
+    fixture = SOURCE.parent / "action_bundle.json"
+    bundle = TriageBundle.model_validate_json(fixture.read_text(encoding="utf-8"))
+    progress_shown = Event()
+    ui_threads = []
+    scan_threads = []
+    original = DeltaGenerator.text
+
+    def capture(self, body, *args, **kwargs):
+        if "판정 · 3/7건" in str(body):
+            ui_threads.append(get_ident())
+            progress_shown.set()
+        return original(self, body, *args, **kwargs)
+
+    def scan(label, root, output, *, offline, judge, on_event):
+        scan_threads.append(get_ident())
+        on_event(event("judge", "progress", done=3, total=7))
+        assert progress_shown.wait(15)
+        on_event(event("judge", "end", verdicts={"affected": 1, "undetermined": 4, "not_affected": 2}))
+        return SimpleNamespace(bundle=bundle, paths={}, failures={})
+
+    monkeypatch.setattr(DeltaGenerator, "text", capture)
+    install_backend(monkeypatch, scan)
+    app = AppTest.from_file(str(APP), default_timeout=60).run()
+    submit_server_path(app, tmp_path)
+    assert not app.exception and not app.error
+    assert ui_threads and scan_threads[0] not in ui_threads
+    assert app.subheader.values.count("오늘 할 일 3개 · 영향 있음 1건 · 확인 필요 4건 · 영향 없음 2건") == 1
+    cards = [x for x in app.expander if "관련 취약점" in x.label]
+    assert len(cards) == 3 and all(x.proto.expanded for x in cards)
+    assert any("근거로 쓰지 않았습니다 · container/Dockerfile:2" in w.value for w in app.warning)
+    assert any("triage scan" in x.value and str(tmp_path) in x.value for x in app.code)
+    app.text_input[2].set_value("ghsa-demo-abcd-efgh").run()
+    assert not app.exception
+    assert "검색 결과 1건" in app.subheader.values
+    assert any("CVE-2099-1002 · 판단 유보" in x.value for x in app.text)
+    assert any("(#action-1)" in x.value for x in app.markdown)
+    app.text_input[2].set_value("demo-reader").run()
+    assert "검색 결과 5건" in app.subheader.values
+    assert any("별도 할 일 없음" in x.value for x in app.caption)
+    app.session_state["details_1"] = True
+    app.run()
+    assert not app.exception
+    assert any("문제가 생기는 조건" in x.value for x in app.markdown)
+    assert len(scan_threads) == 1
