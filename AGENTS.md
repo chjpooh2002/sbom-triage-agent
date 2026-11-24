@@ -6,6 +6,15 @@
 - 롯데 AX 챌린지 본선(2026-11-24~25)에서 현장 데이터가 공개된다.
   **새 입력 형식이 와도 변환기 하나만 추가하면 전체 흐름이 돌아가는 것**이 이 저장소의 핵심 요구다.
 
+## 본선 (2026-11-24~25) — 이 절이 위 내용보다 우선
+- 과제: **소스 코드에서 출발**해 SBOM 생성 → 취약점 판정(영향 있음/없음/판단 유보) → 조치·검증 계획 → PDF 보고서. 작업 목록은 `docs/finals/TASKS.md`.
+- 판정은 근거 우선: 버전·배포 여부·판정 모두 `Evidence.id`로 근거를 가리킨다. 모르면 unknown/판단 유보.
+- 모델 호출은 `src/triage/judge/`에서만. 모델에게 저장소를 통째로 주지 않고 증거 묶음만 준다. 취약점 사실(영향·수정 버전)은 조회 데이터가 기준이며 모델에게 묻지 않는다.
+- `models.py`는 동결. 새 필드가 필요하면 PR 본문에 요청한다.
+- 대회 샘플은 `data/field/`에만 둔다. 샘플의 파일명·패키지명·취약점 ID를 코드·프롬프트에 하드코딩하지 않는다.
+- 모델 이름은 환경변수(`SBOMTRIAGE_MODEL`, `SBOMTRIAGE_ESCALATE_MODEL`, `SBOMTRIAGE_REFERENCE_MODEL`)로만 정한다. 주소는 `OPENAI_BASE_URL`.
+- 점검 대상 프로젝트의 어떤 파일도 실행·설치하지 않는다(`npm install`, `pip install`, `mvn` 빌드 금지).
+
 ## 구조
 - `src/triage/ingest/` 입력 정규화(변환기 등록·자동 판별·병합). 변환기는 원본 → `models.py` 구조까지만 책임진다.
 - `src/triage/intel/` KEV·EPSS 캐시. `src/triage/priority/` 결정적 우선순위 엔진.
