@@ -17,8 +17,6 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 sys.path.insert(0, str(ROOT / "app"))
 
-from finals_preview import preview_scan  # noqa: E402
-from triage.output._common import public_url  # noqa: E402
 from triage.pipeline import run  # noqa: E402
 from triage.report import excel  # noqa: E402
 from triage.report.view import action_groups, finding_row, reasons_text, summary  # noqa: E402
@@ -101,9 +99,8 @@ def load_scan():
     except ModuleNotFoundError as exc:
         if exc.name != "triage.finals":
             raise
-        return preview_scan, True
-    scan = getattr(finals, "run_scan", None)
-    return (scan, False) if scan is not None else (preview_scan, True)
+        return None
+    return getattr(finals, "run_scan", None)
 
 
 def show_progress(slots, stages) -> None:
@@ -140,6 +137,8 @@ def final_groups(bundle):
 
 
 def show_evidence(ids, evidence) -> None:
+    from triage.output._common import public_url
+
     for evidence_id in dict.fromkeys(ids):
         item = evidence.get(evidence_id)
         if item is None:
@@ -162,6 +161,8 @@ def finding_label(finding) -> str:
 
 
 def show_detail(finding, evidence, remediation, checklist) -> None:
+    from triage.output._common import public_url
+
     verdict = finding.verdict
     explanation = (verdict.plain_ko or verdict.rationale_ko) if verdict else ""
     st.text(explanation or finding.status_note or "판정 설명이 없습니다.")
@@ -250,8 +251,8 @@ def show_results(bundle, downloads) -> None:
 def finals_screen() -> None:
     st.title("소스 코드 보안 점검")
     st.caption("소스에서 사용 중인 구성요소를 찾고, 서비스에 영향이 있는지 확인합니다.")
-    scan, preview = load_scan()
-    if preview:
+    scan = load_scan()
+    if scan is None:
         st.warning("화면 예시 모드입니다. 입력을 실제로 점검하지 않으며 결과와 파일은 예시입니다.")
     with st.form("finals_input"):
         service = st.text_input("서비스 이름")
@@ -305,6 +306,10 @@ def finals_screen() -> None:
             out.mkdir()
             with st.spinner("점검 중…"):
                 try:
+                    if scan is None:
+                        from finals_preview import preview_scan
+
+                        scan = preview_scan
                     # 본선 통합 계약: (TriageBundle, 산출물 경로 매핑, JSONL 이벤트 목록).
                     bundle, artifacts, events = scan(service, root, out, on_event=on_event)
                     for event in events:
