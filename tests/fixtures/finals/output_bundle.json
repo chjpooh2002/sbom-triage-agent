@@ -4,6 +4,7 @@
       "id": "pkg:pypi/fixture-parser@1.0",
       "purl": "pkg:pypi/fixture-parser@1.0",
       "name": "fixture-parser",
+      "ecosystem": "pypi",
       "version": "1.0",
       "version_source": "manifest_pinned",
       "scope": "runtime",
@@ -17,6 +18,7 @@
       "id": "pkg:pypi/fixture-helper@2.0",
       "purl": "pkg:pypi/fixture-helper@2.0",
       "name": "fixture-helper",
+      "ecosystem": "pypi",
       "version": "2.0",
       "scope": "test",
       "deployed": "no",
@@ -31,6 +33,7 @@
       "file": "requirements-fixture.txt",
       "line_start": 1,
       "line_end": 2,
+      "snippet": "fixture-parser==1.0",
       "note": "점검 대상 버전을 확인했습니다."
     },
     {
@@ -38,7 +41,45 @@
       "kind": "config",
       "file": "app-settings.json",
       "line_start": 3,
-      "snippet": "fixture_mode = true"
+      "line_end": 5,
+      "snippet": "fixture_mode = true\nfixture_checks = true\nfixture_extra = true"
+    },
+    {
+      "id": "scope-0001",
+      "kind": "build",
+      "file": "Containerfile.fixture",
+      "line_start": 8,
+      "snippet": "COPY app/ /srv/app/"
+    },
+    {
+      "id": "lookup-0001",
+      "kind": "tool",
+      "file": "data/cache/lookup/2026-01-02/fixture-response.json",
+      "url": "https://lookup.example.com/query"
+    },
+    {
+      "id": "lookup-0002",
+      "kind": "advisory",
+      "url": "https://lookup.example.com/fixture-note"
+    },
+    {
+      "id": "collect-0002",
+      "kind": "manifest",
+      "file": "unreferenced.fixture",
+      "line_start": 12
     }
+  ],
+  "files": [
+    {"path": "app/entry.py", "deployed": "yes", "category": "app", "reason": "최종 이미지에 복사됩니다.", "evidence_ids": ["scope-0001"]},
+    {"path": "checks/entry_check.py", "deployed": "no", "category": "test", "reason": "테스트 전용입니다."},
+    {"path": "archive/entry.py", "deployed": "no", "category": "legacy", "reason": "보관용 파일입니다."},
+    {"path": "tools/local.py", "deployed": "no", "category": "script", "reason": "로컬 도구입니다."},
+    {"path": "generated/model.py", "deployed": "yes", "category": "generated", "reason": "빌드 산출물에 포함됩니다."},
+    {"path": "third_party/fixture.min.js", "deployed": "unknown", "category": "vendored_bundle", "reason": "실제 배포 파일을 확인해야 합니다."}
+  ],
+  "anomalies": [
+    {"kind": "lock_mismatch", "message": "총 3건 · 대표 사례 첫 번째 고정 버전이 다릅니다.", "evidence_ids": ["collect-0001"]},
+    {"kind": "lock_mismatch", "message": "두 번째 고정 버전이 다릅니다."},
+    {"kind": "missing_metadata", "message": "구성요소 식별 정보가 없습니다."}
   ]
 }
