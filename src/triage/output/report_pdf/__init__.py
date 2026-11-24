@@ -214,10 +214,37 @@ def _action_plan(action, members, matching_edits, plans, decisions):
         method = f"{edit['file']}:{edit['line']} 선언 변경"
     return {
         "component": action.component, "affected": bool(affected), "target": target, "target_label": target_label,
+        "verified": verified,
         "ids": [f.vulnerability.id for f in affected], "lead": decisions[lead.key],
         "risk": action_view.risk_summary(lead) if affected else "", "edits": matching_edits, "edit": edit,
         "method": method, "verify": verify, "steps": steps,
     }
+
+
+def _cover_instruction(action, plan):
+    if not plan["affected"]:
+        if action.work_request:
+            return f"{action.team or '담당 팀'}에 확인을 요청하세요. {action.work_request.title}"
+        question = action.missing_info[0].what if action.missing_info else f"{action.component}의 사용 조건"
+        return f"배포 환경에서 다음 내용을 먼저 확인하세요. {question}"
+
+    if not action.target or not plan["verified"]:
+        return f"공개 권고문에서 수정 버전을 먼저 확인하세요. 점검 대상은 {action.component}입니다."
+
+    edit = plan["edit"]
+    line = edit.get("line") if edit else None
+    if edit and edit.get("target") == action.target and edit.get("file") and type(line) is int and line > 0:
+        step = f"{edit['file']} {line}행을 수정하세요."
+        if _text_width(step) > LIMIT["sentence"]:
+            return "변경안에서 파일 경로와 줄 번호를 확인한 뒤 해당 줄을 수정하세요."
+        before, after = (edit.get("before") or "").strip(), (edit.get("after") or "").strip()
+        instruction = f"{step} {before} → {after}"
+        if (before and after and before != after and len(instruction.splitlines()) == 1
+                and _text_width(instruction) <= LIMIT["sentence"]):
+            return instruction
+        return f"{step} 바꿀 내용은 2쪽에서 확인하세요."
+
+    return f"먼저 {action.target} 버전을 적용할 위치를 확인하세요. 점검 대상은 {action.component}입니다."
 
 
 def _citations(used, by_id):
@@ -285,6 +312,9 @@ def _context(bundle: TriageBundle, meta: dict) -> dict:
         action_items.append(plan)
         for key in action.findings:
             decisions[key]["action"] = index
+
+    if actions:
+        conclusion = _cover_instruction(actions[0], action_items[0])
 
     components = {c.id: c for c in [*bundle.components, *(f.component for f in bundle.findings)]}
     used = {ref for item in summaries for ref in item["refs"]}
