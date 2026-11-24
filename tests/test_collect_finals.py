@@ -145,6 +145,18 @@ def test_maven_unavailable_leaves_version_unknown(tmp_path, monkeypatch):
     assert all(not c.version and c.version_source == "unknown" for c in result.components)
 
 
+def test_maven_offline_cache_miss_skips_repository_fetch(tmp_path, monkeypatch):
+    monkeypatch.setattr(maven, "CACHE", tmp_path)
+    monkeypatch.setattr(maven.MavenRepositories, "fetch", lambda *_: pytest.fail("오프라인 저장소 조회"))
+    root = FIX / "maven"
+    result = collect(root, offline=True)
+    refs = verify(result, root)
+    missing = next(a for a in result.anomalies if a.kind == "unresolved_pom")
+    assert "오프라인 캐시" in missing.message
+    assert any(refs[r].note == "오프라인 모드에 필요한 POM 캐시 없음" for r in missing.evidence_ids)
+    assert not list(tmp_path.iterdir())
+
+
 def test_maven_managed_transitives_and_nearest_winner(central, monkeypatch):
     root = FIX / "maven-graph"
     result = collect(root)
@@ -177,7 +189,7 @@ def test_maven_managed_transitives_and_nearest_winner(central, monkeypatch):
     assert len(set(central)) == len(central)
     assert not any(url.endswith(("flat-8.0.pom", "sleeve-0.1.pom", "bearing-1.3.pom")) for url in central)
     monkeypatch.setattr(maven, "download", lambda _: pytest.fail("오프라인 재실행에서 네트워크 호출"))
-    assert collect(root) == result
+    assert collect(root, offline=True) == result
 
 
 def test_maven_equal_depth_loser_does_not_reopen_excluded_children(central, monkeypatch):

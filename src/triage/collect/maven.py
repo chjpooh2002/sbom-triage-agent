@@ -185,6 +185,11 @@ class Repository:
                     url = f"{CENTRAL}/{rel}"
                 pom = parse_pom(text, url)
             else:
+                if self.ctx.offline:
+                    missing = self.ctx.evidence(Document(file, "", "manifest", url), None,
+                                                note="오프라인 모드에 필요한 POM 캐시 없음")
+                    self.ctx.anomaly("unresolved_pom", "오프라인 캐시에서 POM을 찾지 못했습니다.", ref, missing)
+                    return None
                 pom = self.repositories.fetch(rel, download, parse_pom, self.ctx.event)
                 url = pom.doc.url
                 cache.parent.mkdir(parents=True, exist_ok=True)

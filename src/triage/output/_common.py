@@ -16,7 +16,7 @@ def finding_state(finding: Finding) -> str:
 
 
 def finding_evidence(finding: Finding) -> list[str]:
-    ids = list(finding.component.evidence_ids)
+    ids = [*finding.component.evidence_ids, *finding.hints.get("evidence_ids", [])]
     if finding.verdict:
         for item in finding.verdict.item_results:
             ids.extend(item.evidence_ids)
