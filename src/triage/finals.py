@@ -11,14 +11,18 @@ from time import perf_counter
 from typing import Protocol
 
 from .collect import collect
+from .intel import enrich
 from .lookup import lookup
 from .models import Anomaly, Evidence, Finding, ItemResult, SourceFileScope, Status, TriageBundle, Verdict
 from .output import RunLog, render_pdf, write_cyclonedx
 from .output._common import artifact_evidence
+from .priority import load_policy, prioritize
+from .remediation import remediate
+from .remediation.providers.template import TemplateProvider
 from .scope import apply_scope
 
 
-STATES = ("affected", "not_affected", "undetermined")
+VERDICT_STATUS = {"affected": Status.affected, "not_affected": Status.not_affected, "undetermined": Status.unknown}
 
 
 class Judge(Protocol):
@@ -112,8 +116,9 @@ def run_scan(
         raise ValueError("실행 번호는 1 이상이어야 합니다.")
 
     root, out_dir = Path(root).resolve(), Path(out_dir)
+    started_at = datetime.now(timezone.utc)
     meta = {"label": label, "name": label, "scope": root.name or label,
-            "generated_at": datetime.now(timezone.utc).isoformat()}
+            "generated_at": started_at.isoformat()}
     bundle = TriageBundle(meta=meta)
     paths: dict[str, Path] = {}
     failures: dict[str, str] = {}
@@ -132,7 +137,8 @@ def run_scan(
     def counts() -> dict:
         verdicts = Counter(finding.verdict.state for finding in bundle.findings if finding.verdict)
         return {"components": len(bundle.components), "candidates": len(bundle.findings), "files": len(bundle.files),
-                "verdicts": {state: verdicts[state] for state in STATES}}
+                "verdicts": {state: verdicts[state] for state in VERDICT_STATUS},
+                "prioritized": len(bundle.results), "remediations": len(bundle.remediations)}
 
     def record_failure(stage: str, error: Exception) -> None:
         error_type = type(error).__name__
@@ -194,11 +200,27 @@ def run_scan(
                     bundle.anomalies = inputs.anomalies
             for finding in bundle.findings:
                 if verdict := finding.verdict:
+                    finding.status = VERDICT_STATUS.get(verdict.state, Status.unknown)
+                    if verdict.rationale_ko:
+                        finding.status_note = verdict.rationale_ko
                     run_log.emit("judge", "decision", finding_key=finding.key, state=verdict.state,
                                  decided_by=verdict.decided_by, decided_at=verdict.decided_at,
                                  evidence_ids=list(dict.fromkeys(ref for item in verdict.item_results
                                                                 for ref in item.evidence_ids)))
             judge_degraded = _note_judge_degradation(bundle, log_path, log)
+
+        with step("enrich"):
+            enrich(bundle)
+
+        with step("priority"):
+            prioritize(bundle, load_policy(), started_at.astimezone().date())
+            unaffected = {finding.key for finding in bundle.findings if finding.status == Status.not_affected}
+            bundle.results.sort(key=lambda result: result.finding_key in unaffected)
+            for rank, result in enumerate(bundle.results, 1):
+                result.rank = rank
+
+        with step("remediate"):
+            remediate(bundle, TemplateProvider(), llm_limit=0, offline=offline, require_registry=True)
 
         sbom_path = out_dir / f"sbom-{label}.json"
         with step("cyclonedx"):

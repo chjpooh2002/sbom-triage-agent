@@ -276,6 +276,7 @@ def test_model_verdict_cites_real_evidence(tmp_path):
     out, evidence, anomalies = run(tmp_path, fake)
     v = out[0].verdict
     assert (v.state, v.decided_by, v.attempts) == ("affected", "model:fake-small", 1)
+    assert out[0].hints["judge_fix_version"] == "2.4.1"
     known = {e.id for e in evidence}
     assert {e for r in v.item_results for e in r.evidence_ids} <= known
     assert v.decided_at and v.plain_ko
