@@ -7,9 +7,10 @@
   <artifactId>gearbox</artifactId>
   <packaging>pom</packaging>
   <modules><module>adjusted</module></modules>
+  <properties><bom.version>2.0</bom.version></properties>
   <dependencyManagement><dependencies>
     <dependency>
-      <groupId>org.fixture</groupId><artifactId>metal-bom</artifactId><version>2.0</version>
+      <groupId>org.fixture</groupId><artifactId>metal-bom</artifactId><version>${bom.version}</version>
       <type>pom</type><scope>import</scope>
     </dependency>
   </dependencies></dependencyManagement>

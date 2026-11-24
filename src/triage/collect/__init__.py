@@ -75,6 +75,7 @@ def collect(root: Path, log: Callable[..., None] | None = None, *, offline: bool
         collect_syft(ctx)
     else:
         report_undeclared(ctx)
+    ctx.summarize_anomalies()
     ctx.event("end", components=len(ctx.result.components), anomalies=len(ctx.result.anomalies))
     return ctx.result
 
