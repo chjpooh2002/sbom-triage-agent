@@ -26,18 +26,29 @@ def switch(name: str, default: bool) -> bool:
     raise ValueError(f"{name} 값은 on 또는 off 여야 합니다")
 
 
+def positive_int(name: str, default: int) -> int:
+    """양의 정수 환경변수. 비어 있으면 기본값, 잘못된 값은 실험 설정 실수이므로 바로 알린다."""
+    raw = os.environ.get(name, "").strip()
+    if not raw:
+        return default
+    if not (raw.isascii() and raw.isdigit()) or int(raw) < 1:
+        raise ValueError(f"{name} 값은 1 이상의 정수여야 합니다")
+    return int(raw)
+
+
 @dataclass(frozen=True)
 class Settings:
     judge: bool = True                    # SBOMTRIAGE_JUDGE: off 면 버전 일치만 보는 기준선
     verify: bool = True                   # SBOMTRIAGE_VERIFY: off 면 검증·재요청 생략
     escalate: bool = True                 # SBOMTRIAGE_ESCALATE: off 면 승급 생략
+    llm_cache: bool = True                # SBOMTRIAGE_LLM_CACHE: off 면 모델 응답·점검표 디스크 캐시를 읽지도 쓰지도 않음
     model: str = ""                       # SBOMTRIAGE_MODEL
     escalate_model: str = ""              # SBOMTRIAGE_ESCALATE_MODEL
     max_attempts: int = 3
     backoff_seconds: float = 1.0
     timeout_seconds: float = 60.0
     max_tool_calls: int = 3
-    workers: int = 4
+    workers: int = 4                      # SBOMTRIAGE_JUDGE_WORKERS 가 있으면 그 값
     max_symbols_per_item: int = 4
     max_config_keys_per_item: int = 3
     max_prompt_evidence_chars: int = 24000
@@ -62,13 +73,14 @@ def load_settings(**overrides) -> Settings:
         judge=switch("SBOMTRIAGE_JUDGE", True),
         verify=switch("SBOMTRIAGE_VERIFY", True),
         escalate=switch("SBOMTRIAGE_ESCALATE", True),
+        llm_cache=switch("SBOMTRIAGE_LLM_CACHE", True),
         model=os.environ.get("SBOMTRIAGE_MODEL", "").strip(),
         escalate_model=os.environ.get("SBOMTRIAGE_ESCALATE_MODEL", "").strip(),
         max_attempts=int(call.get("max_attempts", 3)),
         backoff_seconds=float(call.get("backoff_seconds", 1.0)),
         timeout_seconds=float(timeout or call.get("timeout_seconds", 60)),
         max_tool_calls=int(decide.get("max_tool_calls", 3)),
-        workers=int(decide.get("workers", 4)),
+        workers=positive_int("SBOMTRIAGE_JUDGE_WORKERS", int(decide.get("workers", 4))),
         max_symbols_per_item=int(decide.get("max_symbols_per_item", 4)),
         max_config_keys_per_item=int(decide.get("max_config_keys_per_item", 3)),
         max_prompt_evidence_chars=int(decide.get("max_prompt_evidence_chars", 24000)),

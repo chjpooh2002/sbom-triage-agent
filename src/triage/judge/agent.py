@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import json
 import re
-import traceback
+import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path
@@ -18,7 +18,7 @@ from triage.models import (Anomaly, Checklist, Evidence, Finding, ItemResult, Mi
 
 from . import decide, escalate, explain, verify
 from .checklist import build_checklist
-from .client import LLMClient, load_prompt
+from .client import LLMClient, error_fields, load_prompt
 from .settings import Settings, load_settings
 from .workspace import Workspace
 
@@ -102,6 +102,7 @@ class _Run:
         self.root, self.files, self.base, self.graph = root, files, base, graph
         self.settings, self.client, self.escalate_client, self.log = settings, client, escalate_client, log
         self.scope = {Path(f.path).as_posix(): f for f in files}
+        self.checklists: dict = {}   # 실행 안에서만 쓰는 점검표 사본(같은 취약점·패키지는 한 번만 만든다)
 
     def emit(self, event: str, **data) -> None:
         if self.log:
@@ -112,7 +113,8 @@ class _Run:
         try:
             verdict, extra = self._judge(f, ws)
         except Exception as e:  # 한 건의 예기치 못한 오류가 전체 실행을 멈추지 않게 한다
-            self.emit("error", subject=f.key, error=type(e).__name__, trace=traceback.format_exc(limit=4)[-1500:])
+            # 예외 메시지 원문은 남기지 않는다(경로·응답 본문이 섞일 수 있음). 종류·위치·상태 코드만.
+            self.emit("error", subject=f.key, **error_fields(e))
             verdict, extra = unavailable(f, f"판정 중 오류({type(e).__name__})", ws.checklist), []
         if not verdict.decided_at:
             verdict.decided_at = now()
@@ -130,7 +132,7 @@ class _Run:
             try:
                 verdict.work_request = explain.work_request(f, verdict, ws.checklist, self.client, self.log)
             except Exception as e:  # 요청서 문구 실패는 템플릿으로 대체
-                self.emit("explain.error", subject=f.key, error=type(e).__name__)
+                self.emit("explain.error", subject=f.key, **error_fields(e))
                 verdict.work_request = explain.template_request(f, verdict, explain.team_for(verdict, ws.checklist))
         return verdict, ws, [*ws.anomalies.values(), *extra]
 
@@ -138,7 +140,7 @@ class _Run:
         s = self.settings
         if self.client is None:
             return unavailable(f, "모델 미설정(SBOMTRIAGE_MODEL·OPENAI_API_KEY)"), []
-        checklist = build_checklist(f, self.client, s, self.log)
+        checklist = build_checklist(f, self.client, s, self.log, memo=self.checklists)
         ws.checklist = checklist
         gathered = ws.gather(f, checklist, self.graph)
         prompt = load_prompt("decide")
@@ -247,6 +249,7 @@ def judge_all(findings: list[Finding], evidence: list[Evidence], files: list[Sou
     - ``log`` 는 ``log(stage, event, **data)``. RunLog.emit 을 넘기면 토큰 사용량도 같은 RunLog 에 합산한다.
     """
     s = settings or load_settings()
+    started = time.monotonic()
     root = Path(root).resolve()
     files = list(files)
     emit = (lambda event, **d: log("judge", event, **d)) if log else (lambda event, **d: None)
@@ -273,7 +276,8 @@ def judge_all(findings: list[Finding], evidence: list[Evidence], files: list[Sou
             escalate_client = LLMClient.from_env(s, s.escalate_model, log=log, usage=usage)
     emit("start", findings=len(findings), rule_decided=len(results), pending=len(pending),
          model=client.model if client else "", escalate_model=escalate_client.model if escalate_client else "",
-         switches={"judge": s.judge, "verify": s.verify, "escalate": s.escalate})
+         switches={"judge": s.judge, "verify": s.verify, "escalate": s.escalate},
+         cache_mode="on" if s.llm_cache else "off", workers=s.workers)
 
     new_evidence: list[Evidence] = []
     found: list[Anomaly] = []
@@ -318,5 +322,14 @@ def judge_all(findings: list[Finding], evidence: list[Evidence], files: list[Sou
     states = {}
     for f in results.values():
         states[f.verdict.state] = states.get(f.verdict.state, 0) + 1
-    emit("end", states=states, new_evidence=len(new_evidence), anomalies=len(found))
+    # 회차별 실측 확인용: 실제 모델 요청 수(재시도 포함)와 캐시 적중 수. 캐시 off 면 적중은 항상 0.
+    calls = {"llm_calls": 0, "cache_hits": 0, "checklist_cache_hits": 0, "retries": 0}
+    for c in {id(c): c for c in (client, escalate_client) if c is not None}.values():
+        for k in calls:
+            calls[k] += c.counts.get(k, 0)
+    emit("end", states=states, new_evidence=len(new_evidence), anomalies=len(found),
+         llm_calls=calls["llm_calls"], cache_hits=calls["cache_hits"] + calls["checklist_cache_hits"],
+         cache_hits_by_kind={"llm": calls["cache_hits"], "checklist": calls["checklist_cache_hits"]},
+         cache_mode="on" if s.llm_cache else "off", llm_retries=calls["retries"], workers=s.workers,
+         seconds=round(time.monotonic() - started, 3))
     return [results[i] for i in range(len(findings))]
