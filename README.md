@@ -31,6 +31,8 @@ uv run pytest                             # 테스트
 모델을 쓰려면 `.env.example`을 `.env`로 복사하고 `LLM_PROVIDER=anthropic`(또는 `openai`)과 키를 넣는다.
 처음에는 `uv run triage remediate --provider anthropic --llm-limit 1`로 1건만 확인한다.
 
+- `SBOMTRIAGE_MAVEN_REPOS`는 POM과 버전 메타데이터를 조회할 Maven 저장소 주소를 쉼표로 구분해 지정한다. 입력 순서대로 조회한다.
+
 ## 명령
 
 | 명령 | 하는 일 |

@@ -7,16 +7,17 @@ import tomllib
 from dataclasses import dataclass
 from pathlib import Path
 from tempfile import NamedTemporaryFile
+from urllib.parse import quote, unquote
 from xml.etree.ElementTree import Element, TreeBuilder
 from xml.parsers import expat
 
-import httpx
+from triage.maven_repos import CENTRAL, FetchError, MavenRepositories, download
 
 from .core import Document, SourceLine, safe_file
 from .maven_graph import Dependency, Limits, collect_module
 
 CACHE = Path(__file__).resolve().parents[3] / "data/cache/maven"
-CENTRAL = "https://repo.maven.apache.org/maven2"
+CACHE_SOURCE = "\n<?sbom-triage-source "
 PROPERTY = re.compile(r"\$\{([^{}]+)\}")
 
 
@@ -115,12 +116,6 @@ def valid_coord(gav):
                and not part.endswith(".") for part in gav)
 
 
-def download(url):
-    response = httpx.get(url, timeout=6.0)
-    response.raise_for_status()
-    return response.content.decode("utf-8-sig")
-
-
 def load_limits():
     settings = Path(__file__).with_name("maven_limits.toml").read_text(encoding="utf-8")
     return Limits(**tomllib.loads(settings))
@@ -137,6 +132,7 @@ class Repository:
         self.graph_states = 0
         self.limit_reports = set()
         self.limits = load_limits()
+        self.repositories = MavenRepositories()
 
     def limit(self, kind, message, ref):
         if kind not in self.limit_reports:
@@ -169,37 +165,50 @@ class Repository:
             return None
         group, artifact, version = gav
         rel = f"{group.replace('.', '/')}/{artifact}/{version}/{artifact}-{version}.pom"
-        url = CENTRAL + "/" + rel
+        url = f"{self.repositories.repos[0]}/{rel}"
+        file = "data/cache/maven/" + rel
         cache = CACHE / rel
         self.external[gav] = None
+
+        def parse_pom(text, source):
+            return parse(Document(file, text, "manifest", source))
+
         try:
-            if cache.is_file():
-                text = cache.read_text(encoding="utf-8")
-                cached = True
+            cached = cache.is_file()
+            if cached:
+                text = cache.read_text(encoding="utf-8-sig")
+                # 원문과 출처를 함께 교체하고, 기존 POM 캐시는 Central 출처로 읽는다.
+                original, marker, source = text.rpartition(CACHE_SOURCE)
+                if marker and source.endswith("?>"):
+                    text, url = original, unquote(source[:-2])
+                else:
+                    url = f"{CENTRAL}/{rel}"
+                pom = parse_pom(text, url)
             else:
                 if self.ctx.offline:
-                    missing = self.ctx.evidence(Document("data/cache/maven/" + rel, "", "manifest", url), None,
+                    missing = self.ctx.evidence(Document(file, "", "manifest", url), None,
                                                 note="오프라인 모드에 필요한 POM 캐시 없음")
                     self.ctx.anomaly("unresolved_pom", "오프라인 캐시에서 POM을 찾지 못했습니다.", ref, missing)
                     return None
-                self.ctx.event("maven.fetch", url=url)
-                text = download(url)
-                cached = False
-            pom = parse(Document("data/cache/maven/" + rel, text, "manifest", url))
-            if not cached:
+                pom = self.repositories.fetch(rel, download, parse_pom, self.ctx.event)
+                url = pom.doc.url
                 cache.parent.mkdir(parents=True, exist_ok=True)
-                with NamedTemporaryFile(dir=cache.parent, mode="w", encoding="utf-8", delete=False) as tmp:
-                    tmp.write(text)
+                tmp_path = None
                 try:
-                    os.replace(tmp.name, cache)
+                    with NamedTemporaryFile(dir=cache.parent, mode="w", encoding="utf-8", newline="",
+                                            delete=False) as tmp:
+                        tmp_path = Path(tmp.name)
+                        tmp.write(pom.doc.text + CACHE_SOURCE + quote(url, safe="") + "?>")
+                    os.replace(tmp_path, cache)
                 finally:
-                    Path(tmp.name).unlink(missing_ok=True)
+                    if tmp_path is not None:
+                        tmp_path.unlink(missing_ok=True)
             self.external[gav] = pom
             self.ctx.event("maven.resolved", url=url, cached=cached)
-        except (httpx.HTTPError, OSError, ValueError, expat.ExpatError):
-            failed = self.ctx.evidence(Document("data/cache/maven/" + rel, "", "manifest", url), None,
-                                       note="POM 조회 또는 해석 실패")
-            self.ctx.anomaly("unresolved_pom", f"POM을 읽지 못했습니다 ({':'.join(gav)}).", ref, failed)
+        except (FetchError, OSError, ValueError, expat.ExpatError) as exc:
+            summary = exc.summary if isinstance(exc, FetchError) else f"캐시 {type(exc).__name__}"
+            failed = self.ctx.evidence(Document(file, "", "manifest", url), None, note=summary)
+            self.ctx.anomaly("unresolved_pom", f"POM을 읽지 못했습니다 ({':'.join(gav)}): {summary}", ref, failed)
         return self.external[gav]
 
     def lineage(self, pom):

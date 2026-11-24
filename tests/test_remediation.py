@@ -178,3 +178,27 @@ def test_prefers_same_major_when_only_low_tier_issues_need_major_upgrade():
     assert rule_pick([urgent, low], avail, required=set())[0] == "5.3.18"
     # 급한 취약점이 메이저 업그레이드로만 고쳐지면 메이저를 올린다
     assert rule_pick([urgent, low], avail, required={"CVE-L"})[0] == "6.0.0"
+def test_maven_metadata_uses_shared_repository_settings(monkeypatch):
+    import httpx
+
+    from triage import maven_repos
+    from triage.models import Component
+    from triage.remediation import registry
+
+    calls = []
+
+    def get(url, *, timeout, headers, follow_redirects):
+        calls.append(url)
+        assert timeout.connect == 5.0 and timeout.read == 15.0
+        assert headers["User-Agent"] == maven_repos.USER_AGENT and follow_redirects
+        if len(calls) == 1:
+            return httpx.Response(404, text=" ")
+        return httpx.Response(200, text="<metadata><versioning><versions><version>2.0</version>"
+                                       "</versions></versioning></metadata>")
+
+    repositories = ["https://first.invalid/maven2", "https://next.invalid/maven2"]
+    monkeypatch.setenv("SBOMTRIAGE_MAVEN_REPOS", ",".join(repositories))
+    monkeypatch.setattr(maven_repos.httpx, "get", get)
+    package = Component(id="fixture", ecosystem="maven", group="org.fixture", name="fixture")
+    assert registry._fetch(package, timeout=1) == ["2.0"]
+    assert calls == [f"{repo}/org/fixture/fixture/maven-metadata.xml" for repo in repositories]
