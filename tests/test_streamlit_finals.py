@@ -21,10 +21,16 @@ APP = Path(__file__).resolve().parents[1] / "app" / "streamlit_app.py"
 SOURCE = Path(__file__).parent / "fixtures" / "finals" / "streamlit-source"
 
 
-@pytest.fixture
-def ui(monkeypatch):
+@pytest.fixture(autouse=True)
+def ui(monkeypatch, tmp_path):
     monkeypatch.syspath_prepend(str(APP.parent.parent))
-    return importlib.import_module("app.streamlit_app")
+    module = importlib.import_module("app.streamlit_app")
+    monkeypatch.setattr(module, "WEB_RESULTS", tmp_path / "out" / "web")
+    return module
+
+
+def run_app(timeout=60):
+    return AppTest.from_string("from app.streamlit_app import main\nmain()", default_timeout=timeout).run()
 
 
 def archive_with(name, contents=b"demo"):
@@ -114,7 +120,7 @@ def test_finals_calls_pipeline_and_keeps_downloads(monkeypatch, tmp_path):
         return SimpleNamespace(bundle=bundle, paths=paths, failures={})
 
     install_backend(monkeypatch, scan, judge=judge_provider)
-    app = AppTest.from_file(str(APP), default_timeout=60).run()
+    app = run_app()
     assert [tab.label for tab in app.tabs] == ["본선 소스 점검", "기존 스캔 결과 분석"]
     assert app.tabs[0].checkbox[0].value is False
     submit_server_path(app, tmp_path, offline=True)
@@ -131,18 +137,88 @@ def test_finals_calls_pipeline_and_keeps_downloads(monkeypatch, tmp_path):
     assert any("구성요소 0건" in item.value for item in app.text)
     assert any("판정 6건" in item.value for item in app.text)
     assert any("PDF 보고서 생성 — 완료" in item.value for item in app.text)
-    assert len(app.get("download_button")) == 3
+    buttons = app.get("download_button")
+    assert [button.label for button in buttons] == [
+        "PDF 보고서 내려받기", "구성요소 목록 (SBOM JSON) 내려받기",
+        "PDF 보고서", "구성요소 목록 (SBOM JSON)", "실행 기록 (JSONL)",
+    ]
+    assert buttons[0].proto.type == "primary"
+    conclusion = next(line for line in app.markdown if "먼저 확인할 것" in line.value)
+    assert elements.index(conclusion) < elements.index(buttons[0]) < elements.index(app.text_input[2])
     app.run()
     assert len(calls) == 1
-    assert len(app.get("download_button")) == 3
+    assert len(app.get("download_button")) == 5
 
 
 def test_missing_backend_shows_error(monkeypatch):
     monkeypatch.setitem(sys.modules, "triage.finals", None)
-    app = AppTest.from_file(str(APP), default_timeout=60).run()
+    app = run_app()
     assert not app.exception
     assert app.error[0].value == "점검 실행기를 찾을 수 없습니다"
     assert not app.get("download_button")
+
+
+def test_saved_result_reopens_in_new_session_without_scan(ui, monkeypatch, tmp_path):
+    bundle = TriageBundle.model_validate_json((SOURCE.parent / "action_bundle.json").read_bytes())
+    downloads = {"sbom": ("서비스 목록.json", b"{}")}
+    failures = {"pdf": "글꼴 없음"}
+    command = ui.scan_command("테스트 서비스", str(tmp_path))
+    rendered = []
+
+    def scan(label, root, out, **kwargs):
+        name, data = downloads["sbom"]
+        (out / name).write_bytes(data)
+        return SimpleNamespace(bundle=bundle, paths={"sbom": name}, failures=failures)
+
+    install_backend(monkeypatch, scan)
+    monkeypatch.setattr(ui, "show_results", lambda b, d, f, command: rendered.append((b, d, f, command)))
+    app = run_app()
+    submit_server_path(app, tmp_path)
+    assert not app.exception
+    assert rendered == [(bundle, downloads, failures, command)]
+    directory, = ui.saved_results()
+    assert directory.parent.name == "테스트 서비스"
+    datetime.strptime(directory.name, "%Y%m%d-%H%M%S")
+    assert {file.name for file in directory.iterdir()} == {"meta.json", "bundle.json", "서비스 목록.json"}
+
+    older = ui.WEB_RESULTS / "이전 서비스" / "20000101-000000"
+    older.mkdir(parents=True)
+    monkeypatch.setattr(ui, "load_scan", lambda: None)
+    fresh = run_app()
+    picker = fresh.selectbox[0]
+    assert picker.options[1:] == [f"테스트 서비스 · {directory.name}", "이전 서비스 · 20000101-000000"]
+    picker.select(directory).run()
+    assert not fresh.exception and not fresh.error
+    assert rendered == [(bundle, downloads, failures, command)] * 2
+    assert rendered[-1][0] is not bundle
+
+
+def test_saved_result_rejects_outside_paths(ui, tmp_path):
+    directory = ui.save_result("서비스", TriageBundle(), {}, {}, "점검")
+    with pytest.raises(ValueError, match="경로"):
+        ui.load_result(tmp_path)
+    (tmp_path / "outside.pdf").write_bytes(b"outside")
+    meta = directory / "meta.json"
+    contents = json.loads(meta.read_text(encoding="utf-8"))
+    contents["downloads"] = {"report": "../../../../outside.pdf"}
+    meta.write_text(json.dumps(contents), encoding="utf-8")
+    with pytest.raises(ValueError, match="경로"):
+        ui.load_result(directory)
+    app = run_app()
+    app.selectbox[0].select(directory).run()
+    assert not app.exception
+    assert app.warning.values == ["저장된 점검 결과를 읽을 수 없습니다."]
+    assert not app.get("download_button")
+
+
+def test_save_failure_keeps_current_result(ui, monkeypatch, tmp_path):
+    ui.WEB_RESULTS.parent.write_bytes(b"unavailable")
+    install_backend(monkeypatch, lambda *a, **kw: SimpleNamespace(bundle=TriageBundle(), paths={}, failures={}))
+    app = run_app()
+    submit_server_path(app, tmp_path)
+    assert not app.exception
+    assert app.warning.values == ["이번 점검 결과를 저장할 수 없습니다."]
+    assert len(app.metric) == 4
 
 
 def test_partial_failure_keeps_available_downloads(monkeypatch, tmp_path):
@@ -155,14 +231,14 @@ def test_partial_failure_keeps_available_downloads(monkeypatch, tmp_path):
         return SimpleNamespace(bundle=TriageBundle(), paths={"log": log}, failures={"pdf": "글꼴 없음"})
 
     install_backend(monkeypatch, scan)
-    app = AppTest.from_file(str(APP), default_timeout=60).run()
+    app = run_app()
     submit_server_path(app, tmp_path)
     assert not app.exception
     assert not app.error
     assert app.warning[0].value == "일부 단계 실패"
     assert any("PDF 보고서 생성 · 글꼴 없음" in item.value for item in app.markdown)
     assert any("PDF 보고서 생성 — 실패" in item.value for item in app.text)
-    assert len(app.get("download_button")) == 1
+    assert [button.label for button in app.get("download_button")] == ["실행 기록 (JSONL)"]
 
 
 def test_pipeline_exception_only_displays_type_and_stage(monkeypatch, tmp_path):
@@ -171,7 +247,7 @@ def test_pipeline_exception_only_displays_type_and_stage(monkeypatch, tmp_path):
         raise RuntimeError(f"private marker {root}")
 
     install_backend(monkeypatch, scan)
-    app = AppTest.from_file(str(APP), default_timeout=60).run()
+    app = run_app()
     submit_server_path(app, tmp_path)
     assert not app.exception
     assert [item.value for item in app.error] == ["조회 단계 실패 · 오류 종류 RuntimeError"]
@@ -187,11 +263,11 @@ def test_real_offline_scan_fills_expected_downloads(monkeypatch):
     signature = inspect.signature(backend.run_scan)
     assert list(signature.parameters) == ["label", "root", "out_dir", "offline", "run_no", "judge", "on_event"]
     monkeypatch.setattr(backend, "default_judge", lambda: None)
-    app = AppTest.from_file(str(APP), default_timeout=90).run()
+    app = run_app(timeout=90)
     submit_server_path(app, SOURCE, offline=True)
     assert not app.exception
     assert not app.error
-    assert len(app.get("download_button")) == 4
+    assert len(app.get("download_button")) == 7
     _, downloads, failures = app.session_state["finals_result"]
     assert not failures
     assert downloads["patch"][0].endswith(".patch")
@@ -226,7 +302,7 @@ def test_action_cards_search_details_and_threaded_progress(ui, monkeypatch, tmp_
 
     monkeypatch.setattr(DeltaGenerator, "text", capture)
     install_backend(monkeypatch, scan)
-    app = AppTest.from_file(str(APP), default_timeout=60).run()
+    app = run_app()
     submit_server_path(app, tmp_path)
     assert not app.exception and not app.error
     assert ui_threads and scan_threads[0] not in ui_threads
@@ -284,7 +360,7 @@ def test_action_card_fix_metadata(ui, monkeypatch, tmp_path, status):
         return SimpleNamespace(bundle=bundle, paths=paths, failures={})
 
     install_backend(monkeypatch, scan)
-    app = AppTest.from_file(str(APP), default_timeout=60).run()
+    app = run_app()
     submit_server_path(app, tmp_path)
     assert not app.exception
     cards = [x for x in app.expander if "관련 취약점" in x.label]
@@ -293,7 +369,7 @@ def test_action_card_fix_metadata(ui, monkeypatch, tmp_path, status):
         assert ui.md_escape(action.target or "영향 확인 후 결정") in card.label
         assert any("triage scan" in code.value for code in card.code)
     assert ui.md_escape(top.component.version) in cards[0].label
-    assert len(app.get("download_button")) == int(status is not None)
+    assert len(app.get("download_button")) == (2 if status else 0)
     if status is None:
         assert f"1. {ui.md_escape(old_step)}" in cards[0].markdown.values
         assert not any(code.proto.language == "diff" for code in app.code)
@@ -319,7 +395,7 @@ def test_pending_findings_point_to_first_confirmation(ui, monkeypatch, tmp_path)
     bundle = TriageBundle.model_validate_json((SOURCE.parent / "action_bundle.json").read_text(encoding="utf-8"))
     bundle.findings = [f for f in bundle.findings if f.verdict.state == "undetermined"]
     install_backend(monkeypatch, lambda *args, **kwargs: SimpleNamespace(bundle=bundle, paths={}, failures={}))
-    app = AppTest.from_file(str(APP), default_timeout=60).run()
+    app = run_app()
     submit_server_path(app, tmp_path)
     assert not app.exception
     assert app.metric[1].value == "0"
@@ -340,7 +416,7 @@ def test_external_verdict_markdown_in_cards_search_and_details(monkeypatch, tmp_
         finding.verdict.plain_ko = sentence
         finding.verdict.rationale_ko = f"근거 · {sentence}"
     install_backend(monkeypatch, lambda *args, **kwargs: SimpleNamespace(bundle=bundle, paths={}, failures={}))
-    app = AppTest.from_file(str(APP), default_timeout=60).run()
+    app = run_app()
     submit_server_path(app, tmp_path)
     assert not app.exception
     card = next(card for card in app.expander if "관련 취약점" in card.label)

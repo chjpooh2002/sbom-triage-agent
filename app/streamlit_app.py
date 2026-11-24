@@ -2,13 +2,14 @@
 from __future__ import annotations
 
 import os
+import re
 import shlex
 import sys
 import tempfile
 from collections import Counter, defaultdict
 from collections.abc import Mapping
 from concurrent.futures import ThreadPoolExecutor, wait
-from datetime import date
+from datetime import date, datetime, timedelta
 from importlib import import_module
 from pathlib import Path, PureWindowsPath
 from queue import Empty, Queue
@@ -16,11 +17,13 @@ from stat import S_IFDIR, S_IFMT, S_IFREG
 from zipfile import BadZipFile, ZipFile
 
 import streamlit as st
+from pydantic import BaseModel
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
 from triage.actions import build_actions  # noqa: E402
+from triage.models import TriageBundle  # noqa: E402
 from triage.output._common import file_location, finding_state  # noqa: E402
 from triage.pipeline import run  # noqa: E402
 from triage.output._redact import Redactor  # noqa: E402
@@ -56,6 +59,81 @@ DOWNLOADS = {
     "patch": ("변경안 (.patch)", "text/x-diff"),
     "log": ("실행 기록 (JSONL)", "application/jsonl"),
 }
+WEB_RESULTS = ROOT / "out" / "web"
+STAMP_FORMAT = "%Y%m%d-%H%M%S"
+
+
+class SavedResultMeta(BaseModel):
+    downloads: dict[str, str]
+    failures: dict[str, str]
+    command: str
+
+
+def valid_filename(name: str) -> bool:
+    return bool(name and not name.endswith((" ", ".")) and not PureWindowsPath(name).is_reserved()
+                and not any(ord(char) < 32 or char in '<>:"/\\|?*' for char in name))
+
+
+def checked_child(parent: Path, name: str) -> Path:
+    child = parent / name
+    if not valid_filename(name) or child.resolve() != child.absolute():
+        raise ValueError("저장 결과 경로가 허용되지 않습니다.")
+    return child
+
+
+def save_result(service, bundle, downloads, failures, command):
+    service_dir = checked_child(WEB_RESULTS, service)
+    service_dir.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(dir=service_dir) as temporary:
+        pending = Path(temporary) / "result"
+        pending.mkdir()
+        (pending / "bundle.json").write_text(bundle.model_dump_json(), encoding="utf-8")
+        names = {}
+        for kind, (name, data) in downloads.items():
+            if name.casefold() in {"meta.json", "bundle.json"}:
+                raise ValueError("저장 파일 이름이 겹칩니다.")
+            with checked_child(pending, name).open("xb") as output:
+                output.write(data)
+            names[kind] = name
+        meta = SavedResultMeta(downloads=names, failures=failures, command=command)
+        (pending / "meta.json").write_text(meta.model_dump_json(), encoding="utf-8")
+        stamp = datetime.now()
+        while True:
+            destination = service_dir / stamp.strftime(STAMP_FORMAT)
+            try:
+                pending.rename(destination)
+                return destination
+            except OSError:
+                if not destination.is_dir():
+                    raise
+                stamp += timedelta(seconds=1)
+
+
+def saved_results() -> list[Path]:
+    if not WEB_RESULTS.exists():
+        return []
+    if WEB_RESULTS.resolve() != WEB_RESULTS.absolute():
+        raise ValueError("저장 폴더 경로가 허용되지 않습니다.")
+    runs = []
+    for service in WEB_RESULTS.iterdir():
+        if service.resolve() != service.absolute() or not service.is_dir():
+            continue
+        for run_dir in service.iterdir():
+            if (re.fullmatch(r"[0-9]{8}-[0-9]{6}", run_dir.name)
+                    and run_dir.resolve() == run_dir.absolute() and run_dir.is_dir()):
+                runs.append(run_dir)
+    return sorted(runs, key=lambda path: (path.name, path.parent.name), reverse=True)
+
+
+def load_result(directory: Path):
+    if (directory.absolute().parent.parent != WEB_RESULTS.absolute()
+            or directory.resolve() != directory.absolute()):
+        raise ValueError("저장 결과 경로가 허용되지 않습니다.")
+    meta = SavedResultMeta.model_validate_json(checked_child(directory, "meta.json").read_bytes())
+    bundle = TriageBundle.model_validate_json(checked_child(directory, "bundle.json").read_bytes())
+    downloads = {kind: (name, checked_child(directory, name).read_bytes())
+                 for kind, name in meta.downloads.items() if kind in DOWNLOADS}
+    return bundle, downloads, meta.failures, meta.command
 
 # 콜론도 이스케이프해 Streamlit이 본문의 URL을 자동 링크로 읽지 않게 한다.
 _MD_ESCAPES = str.maketrans({c: "\\" + c for c in r"\`*_{}[]()#+-.!|><$~:"})
@@ -371,6 +449,13 @@ def show_results(bundle, downloads, failures, command=None) -> None:
     else:
         conclusion = "취약점 후보가 없어 먼저 확인할 것은 이번 점검의 수집·조회 범위입니다."
     st.markdown(conclusion)
+    quick_downloads = [kind for kind in ("report", "sbom", "patch") if kind in downloads]
+    if quick_downloads:
+        for column, kind in zip(st.columns(len(quick_downloads)), quick_downloads):
+            name, data = downloads[kind]
+            label, mime = DOWNLOADS[kind]
+            column.download_button(f"{label} 내려받기", data, name, mime, key=f"finals_top_{kind}",
+                                   type="primary" if kind == "report" else "secondary")
     query = st.text_input("취약점·패키지 검색", placeholder="CVE, GHSA 또는 패키지 이름").strip()
     if failures:
         st.warning("일부 단계 실패")
@@ -425,6 +510,21 @@ def finals_screen() -> None:
     st.title("소스 코드 보안 점검")
     st.caption("소스에서 사용 중인 구성요소를 찾고, 서비스에 영향이 있는지 확인합니다.")
     try:
+        history = saved_results()
+    except (OSError, ValueError, RuntimeError):
+        st.warning("저장된 점검 결과를 읽을 수 없습니다.")
+        history = []
+    selected = st.selectbox("저장된 결과 열기", [None, *history], key="finals_history",
+                            format_func=lambda p: f"{p.parent.name} · {p.name}" if p else "새 점검")
+    if selected is not None:
+        try:
+            restored = load_result(selected)
+        except (OSError, ValueError, RuntimeError):
+            st.warning("저장된 점검 결과를 읽을 수 없습니다.")
+        else:
+            show_results(*restored)
+        return
+    try:
         finals = load_scan()
     except Exception as exc:
         show_scan_error("run", exc)
@@ -477,7 +577,7 @@ def finals_screen() -> None:
         if not service or has_upload == bool(server_path.strip()):
             st.error("서비스 이름과 소스 ZIP 또는 서버 폴더 경로 중 하나를 입력해 주세요.")
             return
-        if service in {".", ".."} or any(ord(char) < 32 or char in '<>:"/\\|?*' for char in service):
+        if not valid_filename(service):
             st.error("서비스 이름에 파일 경로 구분자나 특수 문자를 사용할 수 없습니다.")
             return
         with tempfile.TemporaryDirectory(prefix="triage-finals-") as directory:
@@ -536,8 +636,15 @@ def finals_screen() -> None:
                 if kind in downloads and stage not in failures and stages.get(stage) == ("완료", None):
                     stages[stage] = ("완료", 1)
             show_progress(slots, stages)
-            st.session_state["finals_command"] = scan_command(service, str(root) if not has_upload else "")
+            command = scan_command(service, str(root) if not has_upload else "")
+            st.session_state["finals_command"] = command
             st.session_state["finals_result"] = (result.bundle, downloads, failures)
+            try:
+                save_result(service, result.bundle, downloads, failures, command)
+            except (OSError, ValueError, RuntimeError):
+                st.warning("이번 점검 결과를 저장할 수 없습니다.")
+            else:
+                st.rerun()
 
     if result := st.session_state.get("finals_result"):
         show_results(*result, command=st.session_state.get("finals_command"))
