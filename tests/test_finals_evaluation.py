@@ -265,6 +265,59 @@ def test_fetch_missing_uses_mock_http_and_reuses_saved_details(tmp_path, monkeyp
     assert not requests
 
 
+@pytest.mark.parametrize("cached_git", [False, True])
+def test_fetch_missing_uses_package_range_from_alias_after_git_only_detail(tmp_path, monkeypatch, capsys, cached_git):
+    monkeypatch.syspath_prepend(str(REPO))
+    from eval import finals_score
+
+    cve, ghsa, pysec = "FICT-CVE", "FICT-GHSA", "FICT-PYSEC"
+    git_range = {"type": "GIT", "events": [{"introduced": "0"}, {"fixed": "b" * 40}]}
+    cve_doc = {"id": cve, "aliases": [ghsa, pysec], "affected": [{"ranges": [git_range]}]}
+    ghsa_doc = dict(_advisory(cve), id=ghsa)
+    ghsa_doc["affected"][0]["ranges"].append(git_range)
+    cache = tmp_path / "cache"
+    if cached_git:
+        (cache / "eval").mkdir(parents=True)
+        (cache / "eval" / "osv-vuln-git-only.json").write_text(json.dumps(cve_doc), encoding="utf-8")
+
+    gold = tmp_path / "gold.csv"
+    with gold.open("w", encoding="utf-8", newline="") as stream:
+        writer = csv.writer(stream)
+        writer.writerow(("service", "vuln_id", "aliases", "component", "expected_state", "scoring_set", "version"))
+        writer.writerow((SERVICE, cve, f"{ghsa};{pysec}", "Widget", "not_affected", "core", "3.0"))
+    sbom = tmp_path / "sbom-T.json"
+    _write_sbom(sbom, [], [])
+    requests = []
+
+    def respond(request):
+        identifier = request.url.path.rsplit("/", 1)[-1]
+        requests.append(identifier)
+        return httpx.Response(200, json={cve: cve_doc, ghsa: ghsa_doc}[identifier])
+
+    client_type = httpx.Client
+    monkeypatch.setattr(httpx, "Client", lambda **kwargs: client_type(transport=httpx.MockTransport(respond), **kwargs))
+    argv = ["finals_score", "T", "--gold", str(gold), "--sbom", str(sbom), "--out", str(tmp_path),
+            "--osv-cache", str(cache)]
+    monkeypatch.setattr(sys, "argv", [*argv, "--fetch-missing"])
+    finals_score.main()
+
+    report = capsys.readouterr().out
+    expected = [ghsa] if cached_git else [cve, ghsa]
+    assert requests == expected
+    assert "| 버전 범위 밖 제외 | 1 |" in report
+    assert f"{cve} / Widget @ 3.0 (OSV {ghsa})" in report
+    assert f"- 받은 ID ({len(expected)}) — {', '.join(expected)}" in report
+    saved = [json.loads(path.read_text(encoding="utf-8")) for path in (cache / "eval").glob("osv-vuln-*.json")]
+    assert {doc["id"] for doc in saved} == {cve, ghsa}
+
+    requests.clear()
+    finals_score.main()
+    repeated = capsys.readouterr().out
+    assert not requests
+    assert "| core 정확 일치율 (버전 제외 인정) | 100.0% (1/1) |" in repeated
+    assert "- 받은 ID (0) — 없음" in repeated
+
+
 def test_saved_ablation_writes_csv_and_reads_judge_and_run_totals(tmp_path, saved_runs):
     gold, first, second = saved_runs
     out = tmp_path / "out"

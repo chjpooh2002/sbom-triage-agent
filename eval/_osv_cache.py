@@ -38,16 +38,36 @@ def _detail_ids(doc: object) -> set[str]:
     return {item.casefold() for item in [doc["id"], *aliases] if isinstance(item, str) and item}
 
 
-def _outside_ranges(entry: dict, version: str, ecosystem: str) -> bool:
-    rules = entry.get("ranges")
-    if not isinstance(rules, list) or not rules:
-        return False
+def _package_ranges(doc: dict, component: str) -> Iterable[tuple[dict, list[dict], str]]:
+    entries = doc.get("affected")
+    if doc.get("withdrawn") or not isinstance(entries, list):
+        return
+    names = re.split(r"\s+/\s+", component)
+    for entry in entries:
+        package = entry.get("package") if isinstance(entry, dict) else None
+        if not isinstance(package, dict):
+            continue
+        eco, name = package.get("ecosystem"), package.get("name")
+        if not isinstance(eco, str) or not eco or not isinstance(name, str) or not name:
+            continue
+        full_name = _canonical_name(name, eco)
+        if not any(_canonical_name(value, eco) == full_name for value in names):
+            continue
+        ranges = entry.get("ranges")
+        if not isinstance(ranges, list):
+            continue
+        rules = [rule for rule in ranges if isinstance(rule, dict)
+                 and rule.get("type") in ("ECOSYSTEM", "SEMVER")
+                 and isinstance(rule.get("events"), list) and rule["events"]]
+        if rules:
+            yield entry, rules, _VERSION_ECOSYSTEMS.get(eco, "")
+
+
+def _outside_ranges(entry: dict, rules: list[dict], version: str, ecosystem: str) -> bool:
     for rule in rules:
-        if not isinstance(rule, dict) or rule.get("type") not in ("ECOSYSTEM", "SEMVER"):
-            return False
         comparison = "npm" if rule["type"] == "SEMVER" else ecosystem
-        events = rule.get("events")
-        if not isinstance(events, list) or not all(isinstance(event, dict) for event in events):
+        events = rule["events"]
+        if not all(isinstance(event, dict) for event in events):
             return False
         ranges, _, valid = _event_ranges(events)
         if not valid:
@@ -100,23 +120,27 @@ class OsvCache:
             partial.write_text(json.dumps(doc, ensure_ascii=False), encoding="utf-8")
             partial.replace(target)
 
-    def fetch_missing(self, groups: Iterable[tuple[str, ...]], client: httpx.Client) -> FetchResult:
-        received, failed, attempted = set(), [], set()
-        not_found = set()
-        for identifiers in groups:
-            if any(identifier.casefold() in self._by_id for identifier in identifiers):
+    def _advisories(self, identifiers: Iterable[str]) -> Iterable[dict]:
+        docs = {doc["id"]: doc for value in identifiers for doc in self._by_id.get(value.casefold(), ())}
+        return docs.values()
+
+    def fetch_missing(self, groups: Iterable[tuple[str, tuple[str, ...]]], client: httpx.Client) -> FetchResult:
+        received, failed = set(), []
+        completed, blocked = set(), set()
+        for component, identifiers in groups:
+            if any(any(_package_ranges(doc, component)) for doc in self._advisories(identifiers)):
                 continue
             for identifier in identifiers:
                 normalized = identifier.casefold()
-                if normalized in attempted:
-                    if normalized in not_found:
-                        continue
+                if normalized in completed or any(doc["id"].casefold() == normalized
+                                                  for doc in self._by_id.get(normalized, ())):
+                    continue
+                if normalized in blocked:
                     break
-                attempted.add(normalized)
                 try:
                     response = client.get(f"{API}/vulns/{quote(identifier, safe='')}")
                     if response.status_code == 404:
-                        not_found.add(normalized)
+                        completed.add(normalized)
                         failed.append(identifier)
                         continue
                     response.raise_for_status()
@@ -126,37 +150,24 @@ class OsvCache:
                         raise ValueError("요청 ID에 해당하는 OSV 상세 권고가 없습니다")
                     self._save_fetched(doc)
                 except (httpx.HTTPError, OSError, ValueError):
+                    blocked.add(normalized)
                     failed.append(identifier)
                     break
                 for name in names:
                     self._by_id[name].append(doc)
                 received.add(doc["id"])
-                break
+                completed.add(normalized)
+                if any(_package_ranges(doc, component)):
+                    break
         return FetchResult(tuple(sorted(received)), tuple(sorted(failed)))
 
     def outside_advisories(self, identifiers: Iterable[str], component: str, version: str) -> tuple[str, ...]:
         if not exact_version(version) or re.search(r"\.x(?:\.|$)", version, re.IGNORECASE):
             return ()
-        docs = {doc["id"]: doc for value in identifiers for doc in self._by_id.get(value.casefold(), ())}
-        names = re.split(r"\s+/\s+", component)
         checked = set()
-        for identifier, doc in docs.items():
-            if doc.get("withdrawn"):
-                continue
-            entries = doc.get("affected")
-            if not isinstance(entries, list):
-                continue
-            for entry in entries:
-                package = entry.get("package") if isinstance(entry, dict) else None
-                if not isinstance(package, dict):
-                    continue
-                eco, name = package.get("ecosystem"), package.get("name")
-                if not isinstance(eco, str) or not isinstance(name, str) or not name:
-                    continue
-                full_name = _canonical_name(name, eco)
-                if not any(_canonical_name(value, eco) == full_name for value in names):
-                    continue
-                if not _outside_ranges(entry, version, _VERSION_ECOSYSTEMS.get(eco, "")):
+        for doc in self._advisories(identifiers):
+            for entry, rules, ecosystem in _package_ranges(doc, component):
+                if not _outside_ranges(entry, rules, version, ecosystem):
                     return ()
-                checked.add(identifier)
+                checked.add(doc["id"])
         return tuple(sorted(checked))
