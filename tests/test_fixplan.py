@@ -4,8 +4,10 @@ import subprocess
 from pathlib import Path
 
 import pytest
+from typer.testing import CliRunner
 
 from triage import finals
+from triage.cli import app
 from triage.collect import collect
 from triage.fixplan import build_fix_plan, prepare_patch
 from triage.lookup import LookupResult
@@ -70,8 +72,8 @@ def test_plan_edits_only_cited_declarations(project, tmp_path):
         subprocess.run([git, "apply", "--check", str(patch_file)], cwd=project, check=True, capture_output=True)
 
 
-@pytest.mark.parametrize("lookup_unavailable", [False, True])
-def test_scan_applies_same_patch_and_compares_candidates(tmp_path, monkeypatch, lookup_unavailable):
+@pytest.mark.parametrize("lookup_result", ["complete", "cache_miss", "unexpected_error"])
+def test_scan_applies_same_patch_and_compares_candidates(tmp_path, monkeypatch, lookup_result):
     root = tmp_path / "project"
     root.mkdir()
     shutil.copyfile(FIXTURE / "requirements.txt", root / "requirements.txt")
@@ -87,8 +89,10 @@ def test_scan_applies_same_patch_and_compares_candidates(tmp_path, monkeypatch, 
         if component.version == "1.2.3":
             return LookupResult([candidate(component, "TEST-GONE"), candidate(component, "TEST-STAYS")], [])
         assert component.version == "1.3.0" and source.read_bytes() == before
-        if lookup_unavailable:
+        if lookup_result == "cache_miss":
             log("lookup", "cache_miss", source="test")
+        elif lookup_result == "unexpected_error":
+            raise ValueError("unexpected fixture error")
         return LookupResult([candidate(component, "TEST-NOW-PRIMARY", aliases=["TEST-STAYS"]),
                              candidate(component, "TEST-NEW")], [])
 
@@ -102,7 +106,19 @@ def test_scan_applies_same_patch_and_compares_candidates(tmp_path, monkeypatch, 
 
     monkeypatch.setattr(finals, "lookup", lookup)
     monkeypatch.setattr(finals, "remediate", remediate)
-    result = finals.run_scan("demo", root, root / "out", offline=True, judge=judge)
+    monkeypatch.setattr(finals, "default_judge", lambda: judge)
+    run_scan = finals.run_scan
+    scan_results = []
+
+    def capture_scan(*args, **kwargs):
+        result = run_scan(*args, **kwargs)
+        scan_results.append(result)
+        return result
+
+    monkeypatch.setattr(finals, "run_scan", capture_scan)
+    cli_result = CliRunner().invoke(app, ["scan", "demo", str(root), str(root / "out"), "--offline"])
+    assert cli_result.exit_code == int(lookup_result == "unexpected_error"), cli_result.output
+    result, = scan_results
 
     assert source.read_bytes() == before and calls == ["1.2.3", "1.3.0"]
     assert judge_calls == [root]
@@ -114,10 +130,14 @@ def test_scan_applies_same_patch_and_compares_candidates(tmp_path, monkeypatch, 
     assert "==1.2.3" in change["before"] and "==1.3.0" in change["after"]
     check = result.bundle.meta["fix_check"]
     logged_check = next(event["data"] for event in records if (event["stage"], event["event"]) == ("fixplan", "check"))
-    if lookup_unavailable:
-        assert "fixplan" in result.failures and check["status"] == "unavailable"
+    if lookup_result != "complete":
+        failed = lookup_result == "unexpected_error"
+        assert ("fixplan" in result.failures) == failed
+        assert check["status"] == logged_check["status"] == "unavailable"
         assert "재점검 불가" in check["reason"] and check["after_candidates"] is None
-        assert not check["resolved"] and any(a.kind == "stage_failure" for a in result.bundle.anomalies)
+        assert not check["resolved"]
+        assert any(a.kind == "stage_failure" for a in result.bundle.anomalies) == failed
+        assert records[-1]["data"]["status"] == ("partial" if failed else "ok")
     else:
         assert not result.failures and check["status"] == "ok"
         assert check["before_candidates"] == 2 and check["after_candidates"] == 2

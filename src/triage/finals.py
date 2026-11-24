@@ -267,9 +267,10 @@ def run_scan(
                     if lookup_misses or lookup_truncated or "lookup" in failures:
                         raise FixCheckUnavailable("기준 취약점 조회 응답 또는 캐시가 불완전합니다.")
                     check.update(recheck(root, changes, bundle, plan, scan_copy, exclude=excluded), status="ok", reason=None)
+            except FixCheckUnavailable as error:
+                check.update(status="unavailable", reason=f"재점검 불가: {error}")
             except Exception as error:
-                detail = str(error) if isinstance(error, FixCheckUnavailable) else type(error).__name__
-                check.update(status="unavailable", reason=f"재점검 불가: {detail}")
+                check.update(status="unavailable", reason=f"재점검 불가: {type(error).__name__}")
                 raise
             finally:
                 seconds = round(perf_counter() - check_started, 6) if check_started is not None else 0.0
