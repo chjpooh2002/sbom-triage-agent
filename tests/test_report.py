@@ -47,7 +47,7 @@ def test_streamlit_app_renders(offline):
     at = AppTest.from_file(str(ROOT / "app" / "streamlit_app.py"), default_timeout=120)
     at.run()
     assert not at.exception
-    legacy = at.tabs[1]
+    legacy = next(tab for tab in at.tabs if tab.label == "기존 스캔 결과 분석")
     legacy.selectbox[0].set_value("형식별 입력 샘플 (fixtures)")
     legacy.button[0].click()
     at.run()

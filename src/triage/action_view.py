@@ -55,6 +55,24 @@ def action_board(actions: list[Action], findings: dict[str, Finding], evidence: 
     return rows
 
 
+def risk_summary(finding: Finding) -> str:
+    """영향 있음 판정에서 변경 지시와 분리한 위험 설명을 가져온다."""
+    verdict = finding.verdict
+    if not verdict or verdict.state != "affected":
+        return finding.status_note or "영향 여부를 확인할 정보가 더 필요합니다."
+    for text in filter(None, [verdict.plain_ko, verdict.rationale_ko, finding.status_note]):
+        # 위험 설명과 지시가 한 문장이면 원문에서 결과에 해당하는 절만 남긴다.
+        clause = re.search(r"(.*?)(?:있으므로|있으니|있어서|있어[, ])", text)
+        if clause and "수 " in clause[1]:
+            return clause[1].rstrip() + " 있습니다."
+        sentences = re.split(r"(?<=[.!?])\s+", text)
+        factual = [part for part in sentences if not re.search(
+            r"(?:하세요|십시오|합니다만|해야 합니다|바랍니다|권장합니다|권고합니다|해 주세요)[.!?]?$", part)]
+        if factual:
+            return " ".join(factual[:2])
+    return "이 버전에서 권고문의 영향 조건이 충족된 것으로 판정했습니다."
+
+
 def team_requests(actions: list[Action]) -> dict[str, list[tuple[int, Action]]]:
     teams = defaultdict(list)
     for index, action in enumerate(actions, 1):

@@ -151,21 +151,6 @@ def _scan_command(meta: dict) -> str:
                                     bool(meta.get("scan_offline")))
 
 
-def _risk(finding: Finding) -> str:
-    verdict = finding.verdict
-    for text in filter(None, [verdict.plain_ko, verdict.rationale_ko, finding.status_note]):
-        # 위험 설명과 지시가 한 문장이면 원문에서 결과에 해당하는 절만 남긴다.
-        clause = re.search(r"(.*?)(?:있으므로|있으니|있어서|있어[, ])", text)
-        if clause and "수 " in clause[1]:
-            return clause[1].rstrip() + " 있습니다."
-        sentences = re.split(r"(?<=[.!?])\s+", text)
-        factual = [part for part in sentences if not re.search(
-            r"(?:하세요|십시오|합니다만|해야 합니다|바랍니다|권장합니다|권고합니다|해 주세요)[.!?]?$", part)]
-        if factual:
-            return " ".join(factual[:2])
-    return "이 버전에서 권고문의 영향 조건이 충족된 것으로 판정했습니다."
-
-
 def _decision(finding, by_id):
     verdict = finding.verdict
     state = finding_state(finding)
@@ -230,7 +215,7 @@ def _action_plan(action, members, matching_edits, plans, decisions):
     return {
         "component": action.component, "affected": bool(affected), "target": target, "target_label": target_label,
         "ids": [f.vulnerability.id for f in affected], "lead": decisions[lead.key],
-        "risk": _risk(lead) if affected else "", "edits": matching_edits, "edit": edit,
+        "risk": action_view.risk_summary(lead) if affected else "", "edits": matching_edits, "edit": edit,
         "method": method, "verify": verify, "steps": steps,
     }
 
