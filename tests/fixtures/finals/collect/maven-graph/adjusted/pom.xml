@@ -1,0 +1,5 @@
+<project>
+  <parent><groupId>org.fixture</groupId><artifactId>gearbox</artifactId><version>1.0</version></parent>
+  <artifactId>adjusted</artifactId>
+  <properties><bearing.version>2.9.0</bearing.version></properties>
+</project>

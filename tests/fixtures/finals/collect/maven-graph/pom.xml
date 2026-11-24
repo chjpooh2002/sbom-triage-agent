@@ -1,0 +1,26 @@
+<project>
+  <modelVersion>4.0.0</modelVersion>
+  <parent>
+    <groupId>org.fixture</groupId><artifactId>metal-parent</artifactId><version>1.0</version>
+    <relativePath/>
+  </parent>
+  <artifactId>gearbox</artifactId>
+  <packaging>pom</packaging>
+  <modules><module>adjusted</module></modules>
+  <dependencyManagement><dependencies>
+    <dependency>
+      <groupId>org.fixture</groupId><artifactId>metal-bom</artifactId><version>2.0</version>
+      <type>pom</type><scope>import</scope>
+    </dependency>
+  </dependencies></dependencyManagement>
+  <dependencies>
+    <dependency>
+      <groupId>org.fixture</groupId><artifactId>rotor</artifactId><version>1.0</version>
+      <exclusions>
+        <exclusion><groupId>org.fixture</groupId><artifactId>blind</artifactId></exclusion>
+        <exclusion><groupId>*</groupId><artifactId>released</artifactId></exclusion>
+      </exclusions>
+    </dependency>
+    <dependency><groupId>org.fixture</groupId><artifactId>shaft</artifactId><version>1.0</version></dependency>
+  </dependencies>
+</project>
