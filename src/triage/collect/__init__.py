@@ -48,11 +48,11 @@ register(Adapter("dockerfile", lambda p: p.name.lower() == "dockerfile" or p.nam
 register(Adapter("vendored", candidate, lambda ctx, paths: collect_vendor(ctx, paths[0])))
 
 
-def collect(root: Path, log: Callable[..., None] | None = None) -> CollectResult:
+def collect(root: Path, log: Callable[..., None] | None = None, *, offline: bool = False) -> CollectResult:
     root = Path(root).resolve(strict=True)
     if not root.is_dir():
         raise NotADirectoryError(root)
-    ctx = Collection(root, log)
+    ctx = Collection(root, log, offline=offline)
     files = sorted(project_files(root))
     detected = False
     for adapter in ADAPTERS.values():

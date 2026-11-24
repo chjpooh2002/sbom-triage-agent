@@ -93,9 +93,10 @@ def safe_file(root, path):
 
 
 class Collection:
-    def __init__(self, root: Path, log: Callable[..., None] | None):
+    def __init__(self, root: Path, log: Callable[..., None] | None, *, offline: bool = False):
         self.root = root
         self.log = log
+        self.offline = offline
         self.result = CollectResult([], [], [])
         self.locations = {}
         self.components = {}

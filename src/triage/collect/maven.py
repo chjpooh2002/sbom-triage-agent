@@ -177,6 +177,11 @@ class Repository:
                 text = cache.read_text(encoding="utf-8")
                 cached = True
             else:
+                if self.ctx.offline:
+                    missing = self.ctx.evidence(Document("data/cache/maven/" + rel, "", "manifest", url), None,
+                                                note="오프라인 모드에 필요한 POM 캐시 없음")
+                    self.ctx.anomaly("unresolved_pom", "오프라인 캐시에서 POM을 찾지 못했습니다.", ref, missing)
+                    return None
                 self.ctx.event("maven.fetch", url=url)
                 text = download(url)
                 cached = False
