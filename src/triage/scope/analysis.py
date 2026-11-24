@@ -15,6 +15,10 @@ from .docker import Instruction, Line, container_path, ignore_rules, ignored, in
 from .install import commands, normalized_name, omit_dev, options, requirements
 from .maven import Reactor, reactor
 
+_DOCKERFILE = "Dockerfile"
+_DOCKER_IGNORE = ".dockerignore"
+_NPM_MANIFEST = "package.json"
+
 
 @dataclass
 class ScopeResult:
@@ -92,14 +96,15 @@ class Build:
         return self.text[path]
 
     def context_files(self) -> None:
-        ignore = "Dockerfile.dockerignore" if "Dockerfile.dockerignore" in self.paths else ".dockerignore"
-        content = self.read(ignore)
+        specific = _DOCKERFILE + _DOCKER_IGNORE
+        self.ignore_file = specific if specific in self.paths else _DOCKER_IGNORE
+        content = self.read(self.ignore_file)
         rules = ignore_rules(content or "")
         for path in sorted(self.paths):
             line = ignored(path, rules)
             if line:
-                self.excluded[path] = self.cite("config", ignore, line, "빌드 컨텍스트 제외")
-            elif path in {"Dockerfile", ignore}:
+                self.excluded[path] = self.cite("config", self.ignore_file, line, "빌드 컨텍스트 제외")
+            elif path in {_DOCKERFILE, self.ignore_file}:
                 self.excluded[path] = self.cite("build", path, note="Docker 빌드 제어 파일")
             else:
                 self.context["/" + path] = Origin(path)
@@ -114,7 +119,7 @@ class Build:
             line = instruction.line
             if instruction.op == "ENV":
                 line = replace(line, snippet="")
-            ref = self.cite("build", "Dockerfile", line)
+            ref = self.cite("build", _DOCKERFILE, line)
             try:
                 if instruction.op == "FROM":
                     fields = _from_words(instruction.args)
@@ -143,10 +148,8 @@ class Build:
                     current = Stage("", ref, ref, uncertain=[ref])
                 elif current is not None:
                     current.uncertain.append(ref)
-        if current is not None:
-            active_ignore = "Dockerfile.dockerignore" if "Dockerfile.dockerignore" in self.paths else ".dockerignore"
-            if active_ignore in self.paths and self.read(active_ignore) is None:
-                current.uncertain.append(self.cite("config", active_ignore, note="제외 규칙을 읽을 수 없음"))
+        if current is not None and self.ignore_file in self.paths and self.read(self.ignore_file) is None:
+            current.uncertain.append(self.cite("config", self.ignore_file, note="제외 규칙을 읽을 수 없음"))
         return current
 
     def instruction(self, stage: Stage, command: Instruction, ref: str) -> None:
@@ -230,12 +233,12 @@ class Build:
 
     def run(self, stage: Stage, args: str, ref: str) -> None:
         cwd = stage.cwd
-        for tokens in commands(args):
+        for argv in commands(args):
             node_env = stage.node_env
-            if len(tokens) > 1 and tokens[0].startswith("NODE_ENV="):
-                node_env = tokens.pop(0).split("=", 1)[1]
-            command = posixpath.basename(tokens[0])
-            args = tokens[1:]
+            if len(argv) > 1 and argv[0].startswith("NODE_ENV="):
+                node_env = argv.pop(0).split("=", 1)[1]
+            command = posixpath.basename(argv[0])
+            args = argv[1:]
             if command == "cd" and len(args) == 1:
                 cwd = container_path(args[0], cwd)
                 continue
@@ -246,7 +249,7 @@ class Build:
                 continue
             if command == "npm" and args[:1] == ["ci"]:
                 self.npm(stage, cwd, args[1:], node_env, ref)
-            elif command == "mvn" or tokens[0] == "./mvnw":
+            elif command == "mvn" or argv[0] == "./mvnw":
                 self.maven(stage, cwd, args, ref)
             elif (re.fullmatch(r"pip(?:3(?:\.\d+)?)?", command) and args[:1] == ["install"]):
                 self.pip(stage, cwd, args[1:], ref)
@@ -270,7 +273,8 @@ class Build:
         prefixes = options(args, "--prefix", "--prefix")
         if prefixes:
             cwd = container_path(prefixes[-1], cwd)
-        lock = next((stage.files[path] for name in ("npm-shrinkwrap.json", "package-lock.json")
+        default_lock = f"{PurePosixPath(_NPM_MANIFEST).stem}-lock.json"
+        lock = next((stage.files[path] for name in ("npm-shrinkwrap.json", default_lock)
                      if (path := container_path(name, cwd)) in stage.files), None)
         if lock is None:
             raise ValueError("설치 명세를 찾을 수 없음")
@@ -387,7 +391,7 @@ def _source_paths(component: Component, root: Path) -> set[str]:
 
 def _npm_decision(component: Component, install: Install, stage: Stage, build: Build) -> Decision | None:
     sources = _source_paths(component, build.root)
-    package = posixpath.join(posixpath.dirname(install.anchor), "package.json")
+    package = posixpath.join(posixpath.dirname(install.anchor), _NPM_MANIFEST)
     if sources and sources.isdisjoint({install.anchor, package}):
         return None
     lock_path = component.id.partition("#")[2]
@@ -546,15 +550,15 @@ def apply_scope(root: Path, components: list[Component], log: Callable[..., None
                      if name != ".git" and not (folder / name).is_symlink() and (folder / name).is_file())
     paths.sort()
     build = Build(root, paths)
-    content = build.read("Dockerfile")
+    content = build.read(_DOCKERFILE)
     stage = build.interpret(content) if content is not None else None
     if stage is None:
-        reason = "Dockerfile이 없어 배포 여부를 판단할 수 없음" if not (root / "Dockerfile").exists() else "Dockerfile에서 유효한 빌드 스테이지를 확인할 수 없음"
+        reason = "Dockerfile이 없어 배포 여부를 판단할 수 없음" if not (root / _DOCKERFILE).exists() else "Dockerfile에서 유효한 빌드 스테이지를 확인할 수 없음"
         fallback: Decision = ("unknown", reason, (build.cite("build", note=reason),))
     else:
         build.final_files = {origin.path: origin for origin in stage.files.values()}
         build.copy_refs = tuple(ref for (_, path, line, _), ref in build.refs.items()
-                                if path == "Dockerfile" and line and re.match(r"\s*(?:COPY|ADD|RUN)\s", line.snippet, re.I))
+                                if path == _DOCKERFILE and line and re.match(r"\s*(?:COPY|ADD|RUN)\s", line.snippet, re.I))
     updated = []
     for component in components:
         status, reason, refs = _component_decision(component, stage, build) if stage else fallback

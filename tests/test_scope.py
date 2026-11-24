@@ -62,7 +62,7 @@ def test_maven_selected_project_and_reactor_dependencies():
     _assert_evidence(result)
 
 
-def test_inherited_stage_preserves_npm_production_install():
+def test_inherited_stage_preserves_production_install_with_dockerfile_specific_ignore():
     component = Component(id="npm:lint", name="lint-unit", version="1.0", ecosystem="npm", scope="dev",
                           sources=["package-lock.json"])
     result = apply_scope(FIXTURES / "scope-inherit", [component])
