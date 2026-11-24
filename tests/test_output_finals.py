@@ -321,16 +321,17 @@ def test_pdf_cover_required_sections_and_traceability(bundle, tmp_path):
     bundle.findings[1].verdict.item_results[0].reason = "배포 설정에 해당 입력이 없습니다."
     bundle.findings[0].vulnerability.references.append("https://osv.dev/vulnerability/fixture-note")
     bundle.meta["fix_plan"] = [dict(kind="change", findings=["finding-0"], file="deps.txt", line=2,
-                                   before="lib==1", after="lib==2", evidence_ids=["collect-0001"])]
+                                   target="1.2", before="lib==1", after="lib==1.2", evidence_ids=["collect-0001"])]
     bundle.meta["fix_check"] = dict(status="ok", resolved=["finding-0"], remaining=["finding-1"], new=[])
     pages = [packed(p) for p in _pdf_text(bundle, tmp_path / "report.pdf", patch_name="fix-demo.patch",
                                           lookup_sources=[dict(name="공개 조회", retrieved_at="2026-01-03")]).split("\f") if p.strip()]
     assert len(pages) >= 5
-    for phrase in ("한글 예제 프로젝트", "먼저 고칠 것은", "오늘 할 일", "조치 보드", "연락할 부서", "다음 행동",
+    for phrase in ("한글 예제 프로젝트", "deps.txt 2행을 수정하세요. lib==1 → lib==1.2",
+                   "오늘 할 일", "조치 보드", "연락할 부서", "다음 행동",
                    "지금 할 일", "git apply fix-demo.patch", "uv run triage scan", "후보 2건 → 1건", "점검 일부 실패"):
         assert packed(phrase) in pages[0]
     for phrase in ("바로 고칠 것", "왜 위험한가", "app-settings.json:3-5", "fixture_mode = true",
-                   "FIXTURE-0", "영향 버전 범위", "<1.2", "lib==1 → lib==2"):
+                   "FIXTURE-0", "영향 버전 범위", "<1.2", "lib==1 → lib==1.2"):
         assert packed(phrase) in pages[1]
     assert all(packed(s) in pages[2] for s in ("연락할 부서별 확인 요청", "운영팀", "운영 설정을 확인해 주세요.",
                                                "활성화 상태에 따라 재판정합니다."))
@@ -349,6 +350,28 @@ def test_pdf_cover_required_sections_and_traceability(bundle, tmp_path):
     assert all(ref in evidence for ref in ("[evidence-0001]", "[lookup-0001]", "[lookup-0002]", "[collect-0001]"))
     assert "fixture_mode" not in evidence and "unreferenced.fixture" not in appendix
     assert all(secret not in "".join(pages) for secret in ("sensitive-fixture", "javascript:bad"))
+
+
+@pytest.mark.parametrize(("verified", "edit_target", "line", "expected"), [
+    (False, "1.2", 8, "수정 버전을 먼저 확인하세요"),
+    (True, "1.1", 8, "적용할 위치를 확인하세요"),
+    (True, None, 8, "적용할 위치를 확인하세요"),
+    (True, "1.2", None, "적용할 위치를 확인하세요"),
+])
+def test_pdf_cover_requires_a_verified_matching_edit(bundle, verified, edit_target, line, expected):
+    bundle.remediations[0].verified = verified
+    bundle.meta["fix_plan"] = [dict(kind="change", findings=["finding-0"], file="deps.txt", line=line,
+                                    target=edit_target, before="old", after="new")]
+    cover = _context(bundle, {})["conclusion"]
+    assert expected in cover and "old → new" not in cover
+
+
+def test_pdf_cover_for_pending_finding_starts_with_confirmation(bundle):
+    finding = bundle.findings[2]
+    bundle.findings = [finding]
+    assert _context(bundle, {})["conclusion"] == "운영팀에 확인을 요청하세요. 배포 범위 확인"
+    finding.verdict.work_request = None
+    assert finding.component.display in _context(bundle, {})["conclusion"]
 
 
 @pytest.mark.parametrize("only_not_affected", [False, True])
