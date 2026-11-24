@@ -345,7 +345,8 @@ def test_pdf_extracts_korean_report_and_work_request(bundle, tmp_path):
     assert "unreferenced.fixture" not in text
 
     summary = main[main.index("먼저 고칠 것 1개"):main.index("입력 이상")]
-    assert "FIXTURE-0 · fixture-parser · P1 · 목표 버전 1.2" in summary
+    assert "fixture-parser@1.0 업그레이드 · 관련 취약점 2건" in summary
+    assert "P1 · 목표 버전 1.2" in summary
     assert "FIXTURE-1" not in summary
     assert "FIXTURE-2" not in summary
     assert "점검 일부 실패: judge" in summary
@@ -382,3 +383,40 @@ def test_pdf_explicitly_describes_no_action_states(bundle, only_not_affected, tm
     assert "이번 점검에서 확인된 조치 대상이 없습니다." in text
     expected = "모두 영향 없음으로 판정했습니다." if only_not_affected else "취약점 후보가 0건입니다."
     assert expected in text
+
+
+def test_pdf_uses_same_actions_in_summary_plan_and_verification(tmp_path):
+    from triage.actions import build_actions
+
+    fixture = Path(__file__).parent / "fixtures/finals/action_bundle.json"
+    bundle = TriageBundle.model_validate_json(fixture.read_text(encoding="utf-8"))
+    # 네 번째 카드는 3·4절에는 있고 첫머리에는 없어야 한다.
+    extra = bundle.findings[2].model_copy(deep=True)
+    extra.key = "separate-component"
+    extra.component.id = "pkg:pypi/another@1"
+    extra.component.name = "another"
+    extra.vulnerability.id = "FIXTURE-EXTRA"
+    bundle.findings.append(extra)
+    actions = build_actions(bundle)
+    assert len(actions) == 4
+    text = " ".join(_pdf_text(bundle, tmp_path / "report.pdf").split())
+    top = text.split("먼저 고칠 것 3개", 1)[1].split("입력 이상", 1)[0]
+    decisions, rest = text.split("2. 취약점 후보별 판정 및 근거", 1)[1].split("3. 조치 항목 및 우선순위", 1)
+    plan, verification = rest.split("4. 검증 계획", 1)
+    verification = verification.split("5. 점검 한계", 1)[0]
+    assert all(f.vulnerability.id in decisions for f in bundle.findings)
+    assert actions[-1].title not in top
+    for section in (top, plan, verification):
+        expected = actions[:3] if section == top else actions
+        positions = [section.index(a.title) for a in expected]
+        assert positions == sorted(positions)
+    for section in (plan, verification):
+        assert section.count("할 일 ") == len(actions)
+        for idx, action in enumerate(actions, 1):
+            card = section.split(f"할 일 {idx} · ", 1)[1].split("할 일 ", 1)[0]
+            for key in action.findings:
+                assert bundle.finding(key).vulnerability.id in card
+            if action.target:
+                assert f"목표 버전 후보 {action.target} (확인 필요)" in card
+            assert all(ref in card for ref in action.evidence_ids)
+    assert "활성 옵션 · 확인 위치 배포 설정" in verification

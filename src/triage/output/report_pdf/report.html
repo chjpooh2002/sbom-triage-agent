@@ -73,6 +73,19 @@
     <li>공개 권고문 링크 확인 필요</li>
   {% endfor %}
 {%- endmacro %}
+{% macro action_target(item) -%}
+  {% if item.target and item.verified %}목표 버전 {{ item.target }}
+  {% elif item.target %}목표 버전 후보 {{ item.target }} (확인 필요)
+  {% elif item.kind == 'confirm' %}영향 조건 확인 후 목표 결정
+  {% else %}목표 버전 확인 필요{% endif %}
+{%- endmacro %}
+{% macro action_heading(item, index) -%}
+  <h3>할 일 {{ index }} · {{ item.title }}</h3>
+  <p>{{ action_target(item) }}</p>
+  <p class="compact wrap">관련 취약점 {{ item.identifiers | join(', ') }}</p>
+  {% if item.evidence %}{{ evidence_rows(item.evidence, with_snippet=false) }}
+  {% else %}<p class="ref">대표 근거 위치 미기록</p>{% endif %}
+{%- endmacro %}
 {% set project = meta.get('project') %}
 {% set project = project if project is mapping else {} %}
 {% set project_name = meta.get('project') if meta.get('project') is string else project.get('name') %}
@@ -93,15 +106,8 @@
   {% if top_actions %}
   <ol>
     {% for item in top_actions %}
-      {% set plan = item.remediation %}
-      <li class="wrap">
-        <strong>{{ item.vulnerability.id }} · {{ item.component.name }}</strong>
-        {% if item.asset %} · {{ item.asset }}{% endif %}
-        · {{ item.priority.tier or '우선순위 미산정' }}
-        {% if plan.verified and plan.target_version %} · 목표 버전 {{ plan.target_version }}
-        {% elif plan.target_version %} · 목표 버전 후보 {{ plan.target_version }} (확인 필요)
-        {% elif plan.summary_ko %} · {{ plan.summary_ko }}
-        {% else %} · 조치 계획 확인 필요{% endif %}
+      <li class="wrap"><strong>{{ item.title }}</strong>
+        {% if item.tier %} · {{ item.tier }}{% endif %} · {{ action_target(item) }}
       </li>
     {% endfor %}
   </ol>
@@ -267,47 +273,51 @@
 <section>
   <h2>3. 조치 항목 및 우선순위</h2>
   {% for item in action_items %}
-    {% set p = item.priority %}
-    {% set r = item.remediation %}
     <article class="finding wrap">
-      <h3>{{ item.vulnerability.id }} · {{ item.component.name }}{% if item.asset %} · {{ item.asset }}{% endif %}</h3>
-      {% if item.state == 'undetermined' %}<p>판단 유보 · 영향이 확인되면 아래 조치 계획을 적용합니다.</p>{% endif %}
-      <p>우선순위 {{ p.tier or '미산정' }} · 기한 {{ p.due_date or '미정' }}</p>
-      {% if p.get('reasons') %}
-        <ul>{% for reason in p.reasons %}<li>{{ reason.signal }} · {{ reason.effect }}{% if reason.source %} · {{ reason.source }}{% endif %}</li>{% endfor %}</ul>
+      {{ action_heading(item, loop.index) }}
+      <p>영향 있음 {{ item.counts.affected }}건 · 판단 유보 {{ item.counts.undetermined }}건
+        · 우선순위 {{ item.tier or '미산정' }} · 기한 {{ item.due or '미정' }}</p>
+      {% if item.kind == 'confirm' %}
+        <p>배포 환경에서 영향 조건을 확인하고 4절의 확인 결과로 재판정합니다.</p>
+      {% elif item.steps %}
+        <ol>{% for step in item.steps %}<li>{{ step }}</li>{% endfor %}</ol>
+      {% elif item.kind == 'base_image' %}
+        <p>배포 중인 이미지의 태그와 다이제스트를 확인한 뒤 Dockerfile의 기반 이미지를 교체합니다.</p>
+      {% else %}
+        <p>권고문에서 수정 버전을 확인한 뒤 의존성 명세와 잠금 파일을 갱신합니다.</p>
       {% endif %}
-      <p>현재 버전 {{ item.component.version or '확인되지 않음' }} · 공개 수정 버전 {{ item.vulnerability.fixed_versions | join(', ') or '확인되지 않음' }}</p>
-      <p>{% if r.verified and r.target_version %}목표 버전 {{ r.target_version }}
-         {% elif r.target_version %}목표 버전 후보 {{ r.target_version }} (확인 필요)
-         {% else %}검증된 목표 버전 없음{% endif %}</p>
-      {% if r.summary_ko %}<p>{{ r.summary_ko }}</p>{% endif %}
-      {% if r.get('steps') %}<ol>{% for step in r.steps %}<li>{{ step }}</li>{% endfor %}</ol>{% endif %}
-      {% if r.workaround %}<p>임시 완화 방안 {{ r.workaround }}</p>{% endif %}
-      {% if not r %}<p>조치 계획을 확인해야 합니다.</p>{% endif %}
+      {% for workaround in item.workarounds %}<p>임시 완화 방안 {{ workaround }}</p>{% endfor %}
     </article>
   {% else %}
-    <p>{{ '실패 단계의 결과를 확인한 뒤 조치 대상을 다시 판단합니다.' if failed_stages else '영향 있음으로 확인된 조치 대상이 없습니다.' }}</p>
+    <p>{{ '실패 단계의 결과를 확인한 뒤 조치 대상을 다시 판단합니다.' if failed_stages else '현재 확인된 조치 대상이 없습니다.' }}</p>
   {% endfor %}
 </section>
 
 <section>
   <h2>4. 검증 계획</h2>
-  {% if action_items %}
-    <ol>
-      <li>조치 후 잠금 파일과 배포 산출물에서 실제 설치 버전을 확인합니다.</li>
-      <li>SBOM과 취약점 조회를 다시 실행해 적용 버전이 공개 권고문의 영향 범위를 벗어나는지 확인합니다.</li>
-      <li>영향 경로의 정상 동작과 기존 테스트 결과를 확인하고 재판정 근거를 남깁니다.</li>
-    </ol>
-    {% for item in action_items if item.remediation.get('verify_notes') %}
-      <h3>{{ item.vulnerability.id }} · {{ item.component.name }}</h3>
-      <ul>{% for note in item.remediation.verify_notes %}<li>{{ note }}</li>{% endfor %}</ul>
-    {% endfor %}
+  {% for item in action_items %}
+    <article class="finding wrap">
+      {{ action_heading(item, loop.index) }}
+      {% if item.kind == 'confirm' %}
+        <p>확인할 것 · 다음 정보를 확보해 관련 후보의 영향 여부를 다시 판정합니다.</p>
+      {% elif item.kind == 'base_image' %}
+        <p>확인할 것 · 배포한 이미지의 다이제스트와 런타임 패치 버전을 기록하고 SBOM을 다시 생성해 관련 권고문과 대조합니다.</p>
+      {% else %}
+        <p>확인할 것 · 조치 후 잠금 파일과 배포 산출물에서 실제 설치 버전을 확인합니다. 소스를 재점검해 관련 후보의 영향 범위와 회귀 테스트 결과를 확인합니다.</p>
+      {% endif %}
+      {% if item.missing_info %}
+        <ul>{% for m in item.missing_info %}<li>{{ m.what }} · 확인 위치 {{ m.where }}</li>{% endfor %}</ul>
+      {% elif item.kind == 'confirm' %}
+        <p>배포 설정과 호출 코드에서 권고문의 발현 조건을 확인합니다.</p>
+      {% endif %}
+      {% if item.verify_notes %}
+        <p>목표 선정 시 확인 기록</p>
+        <ul>{% for note in item.verify_notes %}<li>{{ note }}</li>{% endfor %}</ul>
+      {% endif %}
+    </article>
   {% else %}
     <p>현재 확인된 조치 대상이 없어 조치 후 검증 항목이 없습니다.</p>
-  {% endif %}
-  {% if groups.undetermined %}
-    <p>판단 유보 항목은 후보별 추가 정보와 확인 위치를 점검한 뒤 재판정합니다.</p>
-  {% endif %}
+  {% endfor %}
 </section>
 
 <section>

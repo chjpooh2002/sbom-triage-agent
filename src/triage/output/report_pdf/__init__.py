@@ -196,16 +196,41 @@ def _detail_groups(findings: list[dict], state: str) -> list[dict]:
     return list(details.values())
 
 
+def _action_cards(bundle: TriageBundle, priorities, by_id) -> list[dict]:
+    # actions도 출력 공통 판정 함수를 사용하므로 PDF 렌더링 시점에 불러온다.
+    from triage.actions import build_actions
+
+    findings = {f.key: f for f in bundle.findings}
+    plans = {r.finding_key: r for r in bundle.remediations}
+    cards = []
+    for action in build_actions(bundle):
+        priority = priorities.get(action.top_finding)
+        members = [findings[key] for key in action.findings]
+        matching = [plans[f.key] for f in members if action.target and f.key in plans
+                    and plans[f.key].target_version == action.target]
+        cards.append({
+            "title": action.title, "kind": action.kind, "target": action.target,
+            "counts": action.counts,
+            "verified": bool(matching) and all(r.verified for r in matching),
+            "identifiers": list(dict.fromkeys(f.vulnerability.id for f in members)),
+            "tier": priority.tier.value if priority else "", "due": priority.due_date if priority else "",
+            "evidence": _evidence_details(action.evidence_ids, by_id),
+            "missing_info": [m.model_dump() for m in action.missing_info],
+            "steps": list(dict.fromkeys(step for r in matching for step in r.steps)),
+            "workarounds": list(dict.fromkeys(r.workaround for r in matching if r.workaround)),
+            "verify_notes": list(dict.fromkeys(note for r in matching for note in r.verify_notes)),
+        })
+    return cards
+
+
 def _context(bundle: TriageBundle, meta: dict) -> dict:
     priorities = {priority.finding_key: priority for priority in bundle.results}
-    remediations = {remediation.finding_key: remediation for remediation in bundle.remediations}
     by_id = {item.id: item for item in bundle.evidence}
     decision_ids = []
     groups: dict[str, list[dict]] = {state: [] for state in _STATES}
     for finding in bundle.findings:
         verdict = finding.verdict
         priority = priorities.get(finding.key)
-        remediation = remediations.get(finding.key)
         state = finding_state(finding)
         verdict_ids = [ref for item in verdict.item_results for ref in item.evidence_ids] if verdict else []
         decision_ids.extend(verdict_ids)
@@ -234,7 +259,6 @@ def _context(bundle: TriageBundle, meta: dict) -> dict:
             "body_ids": body_ids,
             "verdict": verdict.model_dump(mode="json") if verdict else {},
             "priority": priority.model_dump(mode="json") if priority else {},
-            "remediation": remediation.model_dump(mode="json") if remediation else {},
             "evidence": locations[:2],
             "links": links,
             "link": links[0] if links else "",
@@ -246,7 +270,7 @@ def _context(bundle: TriageBundle, meta: dict) -> dict:
             item["vulnerability"]["id"], item["component"]["id"], item["asset"] or "",
         ))
     summaries = [item for findings in groups.values() for item in findings]
-    action_items = [*groups["affected"], *(item for item in groups["undetermined"] if item["remediation"])]
+    action_items = _action_cards(bundle, priorities, by_id)
     details = {state: _detail_groups(groups[state], state) for state in ("affected", "undetermined")}
     extra_links = defaultdict(dict)
     for item in summaries:
@@ -267,7 +291,7 @@ def _context(bundle: TriageBundle, meta: dict) -> dict:
         "groups": groups,
         "summaries": summaries,
         "details": details,
-        "top_actions": groups["affected"][:3],
+        "top_actions": action_items[:3],
         "action_items": action_items,
         "work_requests": work_requests,
         "states": _STATES,

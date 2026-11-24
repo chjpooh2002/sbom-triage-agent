@@ -1,12 +1,17 @@
 """시연 화면. 실행: uv run streamlit run app/streamlit_app.py"""
 from __future__ import annotations
 
+import os
+import shlex
 import sys
 import tempfile
+from collections import Counter, defaultdict
 from collections.abc import Mapping
+from concurrent.futures import ThreadPoolExecutor, wait
 from datetime import date
 from importlib import import_module
 from pathlib import Path, PureWindowsPath
+from queue import Empty, Queue
 from stat import S_IFDIR, S_IFMT, S_IFREG
 from zipfile import BadZipFile, ZipFile
 
@@ -15,6 +20,8 @@ import streamlit as st
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
+from triage.actions import build_actions  # noqa: E402
+from triage.output._common import file_location, finding_state  # noqa: E402
 from triage.pipeline import run  # noqa: E402
 from triage.output._redact import Redactor  # noqa: E402
 from triage.report import excel  # noqa: E402
@@ -42,11 +49,7 @@ STAGES = {
     "cyclonedx": ("구성요소 목록 생성", "생성 파일", None),
     "pdf": ("PDF 보고서 생성", "생성 파일", None),
 }
-GROUPS = {
-    "affected": "지금 고칠 것 (영향 있음)",
-    "not_affected": "안 고쳐도 되는 것과 이유 (영향 없음)",
-    "undetermined": "확인이 필요한 것 (판단 유보)",
-}
+STATE_LABELS = {"affected": "영향 있음", "not_affected": "영향 없음", "undetermined": "판단 유보"}
 DOWNLOADS = {
     "report": ("PDF 보고서", "application/pdf"),
     "sbom": ("구성요소 목록 (SBOM JSON)", "application/json"),
@@ -121,12 +124,21 @@ def show_progress(slots, stages) -> None:
     for stage, (label, unit, _) in STAGES.items():
         status, count = stages.get(stage, ("대기", None))
         suffix = f" · {unit} {count}건" if count is not None else ""
+        if stage == "judge" and isinstance(count, str):
+            suffix = f" · 판정 · {count}건"
         slots[stage].text(f"{label} — {status}{suffix}")
 
 
 def update_stage(stages, record) -> None:
     stage = record.get("stage")
     event = record.get("event")
+    if stage == "judge" and event == "progress":
+        data = record.get("data", {})
+        done, total = data.get("done"), data.get("total")
+        previous, _ = stages.get(stage, ("", None))
+        if type(done) is int and type(total) is int and 0 <= done <= total and previous not in ("완료", "실패"):
+            stages[stage] = ("진행 중", f"{done}/{total}")
+        return
     if stage not in STAGES or event not in ("start", "end", "error"):
         return
     status = {"start": "진행 중", "end": "완료", "error": "실패"}[event]
@@ -139,22 +151,6 @@ def update_stage(stages, record) -> None:
     if stage == "judge" and isinstance(count, Mapping):
         count = sum(value for value in count.values() if type(value) is int and value >= 0)
     stages[stage] = (status, count if type(count) is int and count >= 0 else None)
-
-
-def final_groups(bundle):
-    priorities = {result.finding_key: result for result in bundle.results}
-
-    def ordering(finding):
-        priority = priorities.get(finding.key)
-        if priority is None:
-            return (float("inf"), float("inf"), 0, finding.key)
-        return (priority.tier.rank, priority.rank or float("inf"), -priority.score, finding.key)
-
-    groups = {state: [] for state in GROUPS}
-    for finding in sorted(bundle.findings, key=ordering):
-        state = finding.verdict.state if finding.verdict else "undetermined"
-        groups.get(state, groups["undetermined"]).append(finding)
-    return groups
 
 
 def show_evidence(ids, evidence) -> None:
@@ -237,34 +233,137 @@ def show_detail(finding, evidence, remediation, checklist) -> None:
                            *request.branches]), language=None)
 
 
-def show_results(bundle, downloads, failures) -> None:
+def reason_text(finding):
+    verdict = finding.verdict
+    return ((verdict.plain_ko or verdict.rationale_ko) if verdict else "") or finding.status_note or "판정 설명이 없습니다."
+
+
+def scan_command(label: str, source: str) -> str:
+    def quote(value):
+        if os.name == "nt":
+            return "'" + value.replace("'", "''") + "'"
+        return shlex.quote(value)
+
+    return "triage scan " + " ".join(map(quote, (label, source or "./source", "./out")))
+
+
+def show_search(query, findings, membership):
+    hits = []
+    for f in findings:
+        names = [f.component.display, *f.vulnerability.all_ids]
+        if any(query.casefold() in name.casefold() for name in names):
+            hits.append(f)
+    st.subheader(f"검색 결과 {len(hits)}건")
+    matched = set()
+    for f in hits:
+        st.text(f"{finding_label(f)} · {STATE_LABELS[finding_state(f)]}")
+        st.text((f.verdict.rationale_ko if f.verdict else "") or reason_text(f))
+        if index := membership.get(f.key):
+            matched.add(index)
+            st.markdown(f"[할 일 {index}로 이동](#action-{index})")
+        else:
+            st.caption("영향 없음 · 별도 할 일 없음")
+    return matched
+
+
+def show_card(action, index, expanded, findings, evidence, plans, checklists, command):
+    top = findings[action.top_finding]
+    st.markdown(f'<div id="action-{index}" style="scroll-margin-top:4rem"></div>', unsafe_allow_html=True)
+    with st.expander(f"{index}. {action.title}", expanded=expanded):
+        st.caption(f"영향 있음 {action.counts['affected']}건 · 확인 필요 {action.counts['undetermined']}건")
+        st.markdown("**무슨 일이 생기나**")
+        st.text(reason_text(top))
+        st.markdown("**어디서**")
+        if action.evidence_ids:
+            show_evidence(action.evidence_ids, evidence)
+        else:
+            st.caption("대표 후보에 연결된 근거가 없습니다.")
+
+        st.markdown("**무엇을 확인하나**" if action.kind == "confirm" else "**어떻게 고치나**")
+        if action.kind == "confirm":
+            for item in action.missing_info:
+                st.text(f"{item.what} · 확인할 곳 {item.where}")
+            if not action.missing_info:
+                st.caption("추가 확인 항목이 기록되지 않았습니다.")
+        else:
+            members = [findings[k] for k in action.findings]
+            if action.target:
+                st.text(f"교체 목표 {action.target}")
+            relevant = [plans[f.key] for f in members if f.key in plans and plans[f.key].target_version == action.target]
+            if relevant:
+                for step in dict.fromkeys(step for plan in relevant for step in plan.steps):
+                    st.text(step)
+                if not all(plan.verified for plan in relevant):
+                    st.caption("목표 버전 확인 필요")
+            else:
+                fixes = dict.fromkeys(v for f in members for v in f.vulnerability.fixed_versions)
+                st.caption("목표 버전 확인 필요 · 조회된 수정 버전 " + (", ".join(fixes) or "없음"))
+        st.markdown("**누구에게**")
+        if request := action.work_request:
+            st.text(f"받는 팀 {action.team}")
+            st.code("\n".join([request.title, request.body, *request.branches]), language=None)
+        else:
+            st.caption("대표 판정에 지정된 팀과 업무 요청서가 없습니다.")
+        st.markdown("**고친 뒤 확인**")
+        st.code(command, language=None)
+        details = st.expander(f"포함된 취약점 {len(action.findings)}건", key=f"details_{index}", on_change="rerun")
+        if details.open:
+            with details:
+                for key in action.findings:
+                    finding = findings[key]
+                    st.text(f"{finding_label(finding)} · {STATE_LABELS[finding_state(finding)]}")
+                    checklist = checklists.get(key, {})
+                    if not isinstance(checklist, Mapping):
+                        checklist = checklist.model_dump()
+                    show_detail(finding, evidence, plans.get(key), checklist)
+
+
+def show_results(bundle, downloads, failures, command=None) -> None:
+    actions = build_actions(bundle)
+    counts = Counter(map(finding_state, bundle.findings))
     for anomaly in bundle.anomalies:
         if anomaly.kind == "judge_degraded":
-            st.warning(Redactor().text(anomaly.message))
+            st.error(Redactor().text(anomaly.message))
+    conclusion, search = st.columns([2, 1], vertical_alignment="center")
+    conclusion.subheader(f"오늘 할 일 {len(actions)}개 · 영향 있음 {counts['affected']}건 · "
+                         f"확인 필요 {counts['undetermined']}건 · 영향 없음 {counts['not_affected']}건")
+    conclusion.caption(f"전체 후보 {len(bundle.findings)}건")
+    query = search.text_input("취약점·패키지 검색", placeholder="CVE, GHSA 또는 패키지 이름").strip()
     if failures:
         st.warning("일부 단계 실패")
         for stage, reason in failures.items():
             st.text(f"{stage_label(stage)} · {reason}")
-    groups = final_groups(bundle)
-    top_actions = groups["affected"][:3]
-    st.subheader(f"먼저 고칠 것 {len(top_actions)}개" if top_actions else "먼저 고칠 것 — 영향 있음 확정 항목 없음")
-    for index, finding in enumerate(top_actions, 1):
-        st.text(f"{index}. {finding_label(finding)}")
-
-    evidence = {item.id: item for item in bundle.evidence}
-    remediations = {item.finding_key: item for item in bundle.remediations}
+    for limitation in bundle.meta.get("limitations", []):
+        st.warning(limitation)
+    membership = {key: index for index, action in enumerate(actions, 1) for key in action.findings}
+    matched = show_search(query, bundle.findings, membership) if query else set()
+    evidence = {e.id: e for e in bundle.evidence}
+    plans = {r.finding_key: r for r in bundle.remediations}
+    findings = {f.key: f for f in bundle.findings}
     checklists = bundle.meta.get("checklists", {})
-    for state, title in GROUPS.items():
-        findings = groups[state]
-        st.subheader(f"{title} · {len(findings)}건")
-        if not findings:
-            st.caption("해당 항목이 없습니다.")
-        for finding in findings:
-            with st.expander(finding_label(finding)):
-                checklist = checklists.get(finding.key, {})
-                if not isinstance(checklist, Mapping):
-                    checklist = checklist.model_dump()
-                show_detail(finding, evidence, remediations.get(finding.key), checklist)
+    command = command or scan_command(bundle.meta.get("label", "서비스"), "")
+    for index, action in enumerate(actions, 1):
+        show_card(action, index, index <= 3 or index in matched, findings, evidence, plans, checklists, command)
+
+    other_anomalies = [item for item in bundle.anomalies if item.kind != "judge_degraded"]
+    if other_anomalies:
+        st.subheader("주의 신호")
+        for item in other_anomalies:
+            if item.kind in {"instruction_like_comment", "stage_failure"}:
+                label = ("판정을 유도하는 주석을 발견했습니다 — 근거로 쓰지 않았습니다"
+                         if item.kind == "instruction_like_comment" else item.message)
+                locations = [file_location(evidence[r]) for r in item.evidence_ids if r in evidence]
+                st.warning(" · ".join(filter(None, [label, *dict.fromkeys(locations)])))
+            else:
+                st.text(item.message)
+    unaffected = defaultdict(list)
+    for f in bundle.findings:
+        if finding_state(f) == "not_affected":
+            unaffected[f.component.id].append(f)
+    with st.expander(f"영향 없음 {counts['not_affected']}건"):
+        for members in unaffected.values():
+            first = members[0]
+            st.text(f"{first.component.display} · {len(members)}건 · 대표 사유 {reason_text(first)}")
 
     st.subheader("내려받기")
     for kind, (label, mime) in DOWNLOADS.items():
@@ -308,16 +407,22 @@ def finals_screen() -> None:
 
     active_stage = "run"
 
-    def on_event(record):
+    def drain(events):
         nonlocal active_stage
-        stage = record.get("stage")
-        event = record.get("event")
-        if stage not in STAGES or event not in ("start", "end", "error"):
-            return
-        if event in ("start", "error"):
-            active_stage = stage
-        update_stage(stages, record)
-        show_progress(slots, stages)
+        changed = False
+        while True:
+            try:
+                record = events.get_nowait()
+            except Empty:
+                break
+            stage, event = record.get("stage"), record.get("event")
+            if stage in STAGES and event in ("start", "error", "end", "progress"):
+                if event in ("start", "error"):
+                    active_stage = stage
+                update_stage(stages, record)
+                changed = True
+        if changed:
+            show_progress(slots, stages)
 
     if submitted:
         service = service.strip()
@@ -351,9 +456,15 @@ def finals_screen() -> None:
                     active_stage = "judge"
                     judge = finals.default_judge()
                     active_stage = "run"
-                    result = finals.run_scan(
-                        service, root, out, offline=offline, judge=judge, on_event=on_event,
-                    )
+                    events = Queue()
+                    with ThreadPoolExecutor(max_workers=1) as worker:
+                        future = worker.submit(finals.run_scan, service, root, out, offline=offline,
+                                               judge=judge, on_event=events.put)
+                        while not future.done():
+                            wait([future], timeout=0.3)
+                            drain(events)
+                        drain(events)
+                        result = future.result()
                 except Exception as exc:
                     if active_stage in STAGES:
                         stages[active_stage] = ("실패", None)
@@ -378,10 +489,11 @@ def finals_screen() -> None:
                 if kind in downloads and stage not in failures and stages.get(stage) == ("완료", None):
                     stages[stage] = ("완료", 1)
             show_progress(slots, stages)
+            st.session_state["finals_command"] = scan_command(service, str(root) if not has_upload else "")
             st.session_state["finals_result"] = (result.bundle, downloads, failures)
 
     if result := st.session_state.get("finals_result"):
-        show_results(*result)
+        show_results(*result, command=st.session_state.get("finals_command"))
 
 
 def sample_inputs(path: Path) -> list[str]:

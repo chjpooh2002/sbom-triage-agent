@@ -1,0 +1,55 @@
+{
+  "components": [
+    {"id":"pkg:pypi/demo-reader@1.0","name":"demo-reader","version":"1.0","ecosystem":"pypi","evidence_ids":["E1"]},
+    {"id":"runtime:demo@4.8","name":"demo","version":"4.8","ecosystem":"runtime","kind":"runtime","declared_spec":"demo:4.8-slim","sources":["container/Dockerfile"],"evidence_ids":["E2"]}
+  ],
+  "findings": [
+    {
+      "key": "finding-1",
+      "component": {"id":"pkg:pypi/demo-reader@1.0","name":"demo-reader","version":"1.0","ecosystem":"pypi","evidence_ids":["E1"]},
+      "vulnerability": {"id":"CVE-2099-1001","aliases":[],"fixed_versions":["1.8","2.0"],"severity":"critical"},
+      "verdict": {"state":"affected","plain_ko":"입력 파일을 처리하는 경로에서 문제가 발생할 수 있습니다.","rationale_ko":"입력 파일을 처리하는 경로에서 문제가 발생할 수 있습니다.","missing_info":[],"work_request":{"to_team":"서비스 개발팀","title":"배포 설정과 적용 일정 확인","body":"운영 환경의 설정을 확인하고 재점검 일정을 알려 주세요."}}
+    },
+    {
+      "key": "finding-2",
+      "component": {"id":"pkg:pypi/demo-reader@1.0","name":"demo-reader","version":"1.0","ecosystem":"pypi","evidence_ids":["E1"]},
+      "vulnerability": {"id":"CVE-2099-1002","aliases":["GHSA-demo-abcd-efgh"],"fixed_versions":["1.5"],"severity":"medium"},
+      "verdict": {"state":"undetermined","plain_ko":"배포 설정에서 해당 기능 사용 여부를 확인해야 합니다.","rationale_ko":"배포 설정에서 해당 기능 사용 여부를 확인해야 합니다.","missing_info":[{"what":"활성 옵션","where":"배포 설정"}],"work_request":{"to_team":"서비스 개발팀","title":"배포 설정과 적용 일정 확인","body":"운영 환경의 설정을 확인하고 재점검 일정을 알려 주세요."}}
+    },
+    {
+      "key": "finding-3",
+      "component": {"id":"pkg:pypi/demo-reader@1.0","name":"demo-reader","version":"1.0","ecosystem":"pypi","evidence_ids":["E1"]},
+      "vulnerability": {"id":"CVE-2099-1003","aliases":[],"fixed_versions":["2.1"],"severity":"high"},
+      "verdict": {"state":"undetermined","plain_ko":"외부 요청에서 이 옵션을 사용하는지 확인이 필요합니다.","rationale_ko":"외부 요청에서 이 옵션을 사용하는지 확인이 필요합니다.","missing_info":[{"what":"활성 옵션","where":"배포 설정"}],"work_request":{"to_team":"서비스 개발팀","title":"배포 설정과 적용 일정 확인","body":"운영 환경의 설정을 확인하고 재점검 일정을 알려 주세요."}}
+    },
+    {
+      "key": "finding-4",
+      "component": {"id":"runtime:demo@4.8","name":"demo","version":"4.8","ecosystem":"runtime","kind":"runtime","declared_spec":"demo:4.8-slim","sources":["container/Dockerfile"],"evidence_ids":["E2"]},
+      "vulnerability": {"id":"CVE-2099-1004","aliases":[],"fixed_versions":["4.8.9"],"severity":"medium"},
+      "verdict": {"state":"undetermined","plain_ko":"실행 이미지의 패치 버전을 확인해야 합니다.","rationale_ko":"실행 이미지의 패치 버전을 확인해야 합니다.","missing_info":[{"what":"활성 옵션","where":"배포 설정"}],"work_request":{"to_team":"서비스 개발팀","title":"배포 설정과 적용 일정 확인","body":"운영 환경의 설정을 확인하고 재점검 일정을 알려 주세요."}}
+    },
+    {
+      "key": "finding-5",
+      "component": {"id":"runtime:demo@4.8","name":"demo","version":"4.8","ecosystem":"runtime","kind":"runtime","declared_spec":"demo:4.8-slim","sources":["container/Dockerfile"],"evidence_ids":["E2"]},
+      "vulnerability": {"id":"CVE-2099-1005","aliases":[],"fixed_versions":["4.8.10"],"severity":"low"},
+      "verdict": {"state":"undetermined","plain_ko":"실행 중인 이미지의 패치 버전을 확인해야 합니다.","rationale_ko":"실행 중인 이미지의 패치 버전을 확인해야 합니다.","missing_info":[{"what":"활성 옵션","where":"배포 설정"}],"work_request":{"to_team":"서비스 개발팀","title":"배포 설정과 적용 일정 확인","body":"운영 환경의 설정을 확인하고 재점검 일정을 알려 주세요."}}
+    },
+    {
+      "key": "finding-6",
+      "component": {"id":"pkg:pypi/demo-reader@1.0","name":"demo-reader","version":"1.0","ecosystem":"pypi","evidence_ids":["E1"]},
+      "vulnerability": {"id":"CVE-2099-1006","aliases":[],"fixed_versions":[],"severity":"high"},
+      "verdict": {"state":"not_affected","plain_ko":"서비스 배포 범위 밖입니다.","rationale_ko":"서비스 배포 범위 밖입니다.","missing_info":[],"work_request":{"to_team":"서비스 개발팀","title":"배포 설정과 적용 일정 확인","body":"운영 환경의 설정을 확인하고 재점검 일정을 알려 주세요."}}
+    },
+    {
+      "key": "finding-7",
+      "component": {"id":"pkg:pypi/demo-reader@1.0","name":"demo-reader","version":"1.0","ecosystem":"pypi","evidence_ids":["E1"]},
+      "vulnerability": {"id":"CVE-2099-1007","aliases":[],"fixed_versions":[],"severity":"high"},
+      "verdict": {"state":"not_affected","plain_ko":"서비스 배포 범위 밖입니다.","rationale_ko":"서비스 배포 범위 밖입니다.","missing_info":[],"work_request":{"to_team":"서비스 개발팀","title":"배포 설정과 적용 일정 확인","body":"운영 환경의 설정을 확인하고 재점검 일정을 알려 주세요."}}
+    }
+  ],
+  "evidence": [
+    {"id":"E1","kind":"manifest","file":"requirements.txt","line_start":1,"snippet":"demo-reader==1.0"},
+    {"id":"E2","kind":"build","file":"container/Dockerfile","line_start":2,"snippet":"FROM demo:4.8-slim"}
+  ],
+  "anomalies": [{"kind":"instruction_like_comment","message":"주석에서 판정 유도 문구 발견","evidence_ids":["E2"]}]
+}

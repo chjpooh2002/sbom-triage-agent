@@ -99,7 +99,10 @@ def test_scan_plans_remediation_from_verdicts(source, tmp_path, monkeypatch, reg
         target_label = f"목표 버전 {target}" if verified else f"목표 버전 후보 {target} (확인 필요)"
         assert target_label in text
         assert "검증 계획" in text and "조치 후 잠금 파일과 배포 산출물에서 실제 설치 버전을 확인합니다." in text
-        assert "영향이 확인되면 아래 조치 계획을 적용합니다." in text
+        actions = text.split("3. 조치 항목 및 우선순위", 1)[1].split("4. 검증 계획", 1)[0]
+        assert actions.count("할 일 1 ·") == 1 and "할 일 2 ·" not in actions
+        assert "영향 있음 1건 · 판단 유보 1건" in actions
+        assert "FIXTURE-A" in actions and "FIXTURE-C" in actions and "FIXTURE-B" not in actions
 
 
 @pytest.mark.parametrize("with_failing_judge", [False, True])
