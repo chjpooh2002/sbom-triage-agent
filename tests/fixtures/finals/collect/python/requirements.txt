@@ -1,0 +1,3 @@
+-r extra/deps.in
+vial-meter==3.2.1
+plain-ring>=1,<3

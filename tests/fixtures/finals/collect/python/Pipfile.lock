@@ -1,0 +1,4 @@
+{
+  "default": {"vial-meter": {"version": "==3.3.0"}},
+  "develop": {"wax-finch": {"version": "==1.8.0"}}
+}

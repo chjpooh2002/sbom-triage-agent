@@ -1,0 +1,12 @@
+{
+  "artifacts": [
+    {
+      "id": "fixture-1",
+      "name": "opaque-wheel",
+      "version": "8.0.1",
+      "type": "python",
+      "purl": "pkg:pypi/opaque-wheel@8.0.1",
+      "locations": [{"path": "/opaque_wheel-8.0.1.dist-info/METADATA"}]
+    }
+  ]
+}

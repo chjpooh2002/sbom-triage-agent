@@ -1,0 +1,5 @@
+[project]
+name = "fixture-optics"
+dependencies = [
+  "thin-lens>=4",
+]
