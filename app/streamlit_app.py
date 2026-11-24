@@ -753,8 +753,9 @@ def show_results(bundle, downloads, failures, command=None) -> None:
                 first = members[0]
                 st.markdown(f"{md_escape(first.component.display)} · {len(members)}건 · "
                             f"대표 사유 {md_escape(reason_text(first))}")
-    with files:
-        show_files(label, actions, downloads, bundle.meta.get("fix_check") or {}, command)
+    if files.open:
+        with files:
+            show_files(label, actions, downloads, bundle.meta.get("fix_check") or {}, command)
 
 
 def finals_screen() -> None:

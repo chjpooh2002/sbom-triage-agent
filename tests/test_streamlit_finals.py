@@ -35,6 +35,11 @@ def run_app(timeout=60):
     return AppTest.from_string("from app.streamlit_app import main\nmain()", default_timeout=timeout).run()
 
 
+def open_files_tab(app):
+    app.session_state["result_view"] = "보고서·파일"
+    app.run()
+
+
 def overview_element(app):
     overview, = [item for item in app.html if 'aria-label="점검 요약"' in item.value]
     return overview
@@ -151,16 +156,16 @@ def test_finals_calls_pipeline_and_keeps_downloads(monkeypatch, tmp_path):
     assert any("판정 6건" in item.value for item in app.text)
     assert any("PDF 보고서 생성 — 완료" in item.value for item in app.text)
     buttons = app.get("download_button")
-    assert [button.label for button in buttons] == [
-        "PDF 내보내기", "구성요소 목록 (SBOM JSON)", "실행 기록 (JSONL)",
-    ]
+    assert [button.label for button in buttons] == ["PDF 내보내기"]
     assert buttons[0].proto.type == "primary"
     conclusion = next(line for line in app.markdown if "먼저 확인할 것" in line.value)
     assert elements.index(buttons[0]) < elements.index(overview) < elements.index(conclusion)
     assert elements.index(conclusion) < elements.index(app.text_input(key="finding_query"))
-    app.run()
+    open_files_tab(app)
     assert len(calls) == 1
-    assert len(app.get("download_button")) == 3
+    assert [b.label for b in app.get("download_button")] == [
+        "PDF 내보내기", "구성요소 목록 (SBOM JSON)", "실행 기록 (JSONL)",
+    ]
 
 
 def test_missing_backend_shows_error(monkeypatch):
@@ -262,6 +267,9 @@ def test_overview_and_pdf_follow_selected_result(ui, monkeypatch):
     page.selectbox(key="queue_mobile").select(3).run()
     assert page.radio(key="queue_desktop").value == 3
     assert overview_counts(page) == totals and not calls
+    assert "export_log" not in downloads
+    open_files_tab(page)
+    assert overview_counts(page) == totals and not calls
     assert downloads["archived_report"] == ("old.pdf", b"stored-pdf")
     name, pdf = downloads["finals_top_report"]
     assert name == "report-저장 서비스.pdf"
@@ -275,6 +283,7 @@ def test_overview_and_pdf_follow_selected_result(ui, monkeypatch):
     assert calls == [directory / "bundle.json"] and (directory / "old.pdf").read_bytes() == b"stored-pdf"
     page.selectbox(key="finals_history").select(other).run()
     assert not page.exception and overview_counts(page)["처리할 일"] == "0개"
+    open_files_tab(page)
     assert not any(b.key == "archived_report" for b in page.get("download_button"))
     assert downloads["finals_top_report"][0] == "report-다른 서비스.pdf"
     assert downloads["finals_top_report"][1]() == (other / "bundle.json").read_bytes()
@@ -335,6 +344,7 @@ def test_partial_failure_keeps_available_downloads(monkeypatch, tmp_path):
     assert app.warning[0].value == "일부 단계 실패"
     assert any("PDF 보고서 생성 · 글꼴 없음" in item.value for item in app.markdown)
     assert any("PDF 보고서 생성 — 실패" in item.value for item in app.text)
+    open_files_tab(app)
     assert [button.label for button in app.get("download_button")] == ["PDF 내보내기", "보고서 재생성 기록", "실행 기록 (JSONL)"]
 
 
@@ -364,6 +374,7 @@ def test_real_offline_scan_fills_expected_downloads(monkeypatch):
     submit_server_path(app, SOURCE, offline=True)
     assert not app.exception
     assert not app.error
+    open_files_tab(app)
     assert len(app.get("download_button")) == 3  # 빈 변경안은 적용을 안내하지 않는다.
     _, downloads, failures = app.session_state["finals_result"]
     assert not failures
@@ -409,6 +420,7 @@ def test_action_cards_search_details_and_threaded_progress(ui, monkeypatch, tmp_
     cards = [x for x in app.expander if "관련 취약점" in x.label]
     assert len(cards) == 1 and len(app.radio(key="queue_desktop").options) == 3
     assert any(r"근거로 쓰지 않았습니다 · container/Dockerfile\:2" in w.value for w in app.warning)
+    open_files_tab(app)
     assert any("triage scan" in x.value and ui.scan_command("테스트 서비스", str(tmp_path)) == x.value for x in app.code)
     hit = next(f for f in bundle.findings if f.vulnerability.aliases)
     app.text_input(key="finding_query").set_value(hit.vulnerability.aliases[0].lower()).run()
@@ -462,6 +474,7 @@ def test_action_card_fix_metadata(ui, monkeypatch, tmp_path, status):
     assert not app.exception
     cards = [x for x in app.expander if "관련 취약점" in x.label]
     assert len(cards) == 1 and app.radio(key="queue_desktop").value == 1
+    open_files_tab(app)
     buttons = {button.key: button for button in app.get("download_button")}
     assert set(buttons) == {"finals_top_report", "export_log", "finals_requests"} | ({"finals_top_patch"} if status else set())
     for action in (upgrade, image, confirm):
@@ -521,6 +534,7 @@ def test_unconfirmed_item_shows_question_even_when_bundle_contains_patch(ui):
     assert not any(code.value == "dependency==2" for code in app.code)
     assert action.work_request.body in next(code.value for code in app.code if "담당자님" in code.value)
     assert any(action.missing_info[0].where in text for text in app.markdown.values)
+    open_files_tab(app)
     assert any(b.key == "finals_top_patch" and b.label.startswith("전체 변경안") for b in app.get("download_button"))
 
 
