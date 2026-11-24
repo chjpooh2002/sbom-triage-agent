@@ -140,7 +140,7 @@ def lookup(components: list[Component], offline: bool = False, log: Log | None =
     with (nullcontext() if offline else httpx.Client(timeout=20)) as client:
         responses = Responses(CACHE_DIR, client, log)
         records = [*_osv.lookup(libraries, responses, evidence), *_nvd.lookup(runtimes, responses, evidence)]
-    findings = _findings(records, evidence)
+    findings = _nvd.limit_candidates(_findings(records, evidence), responses, evidence)
     if findings:
         findings = _enrich(findings, evidence)
     return LookupResult(findings, evidence)
