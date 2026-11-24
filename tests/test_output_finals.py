@@ -1,13 +1,17 @@
 import json
+import os
 import shutil
+import stat
 import subprocess
 from pathlib import Path
 
 import pytest
 from jsonschema import ValidationError
 
-from triage.models import Finding, PriorityResult, Remediation, TriageBundle, Verdict, Vulnerability
+from triage.models import Anomaly, Finding, PriorityResult, Remediation, TriageBundle, Verdict, Vulnerability
 from triage.output import RunLog, render_pdf, validate_cyclonedx, write_cyclonedx
+from triage.output._common import write_artifact
+from triage.output.report_pdf import _context
 
 
 @pytest.fixture
@@ -140,6 +144,21 @@ def test_runlog_explains_unavailable_tokens(usage, tmp_path):
     assert summary["data"]["total_tokens_reason"]
 
 
+@pytest.mark.skipif(os.name != "posix", reason="POSIX 파일 권한 검사")
+@pytest.mark.parametrize(("mask", "mode"), [(0, 0o644), (0o027, 0o640)])
+def test_atomic_artifact_respects_umask_on_replace(tmp_path, mask, mode):
+    out = tmp_path / "artifact"
+    out.write_bytes(b"before")
+    out.chmod(0o600)
+    previous = os.umask(mask)
+    try:
+        write_artifact(out, b"after")
+    finally:
+        os.umask(previous)
+    assert out.read_bytes() == b"after"
+    assert stat.S_IMODE(out.stat().st_mode) == mode
+
+
 def _pdf_text(bundle, out, **meta):
     pdftotext = shutil.which("pdftotext")
     if not pdftotext:
@@ -153,7 +172,36 @@ def _pdf_text(bundle, out, **meta):
     return subprocess.check_output([pdftotext, "-enc", "UTF-8", str(out), "-"], encoding="utf-8")
 
 
+def test_pdf_groups_rule_deferred_candidates_with_shared_source_evidence(bundle):
+    first = bundle.findings[2]
+    first.verdict.decided_by = "rule:insufficient_evidence"
+    first.verdict.item_results[0].evidence_ids = ["evidence-0001", "lookup-0001"]
+    second = first.model_copy(deep=True)
+    second.key = "finding-3"
+    second.vulnerability.id = "FIXTURE-3"
+    second.hints["evidence_ids"] = ["lookup-0002"]
+    second.verdict.item_results[0].evidence_ids = ["evidence-0001", "lookup-0002"]
+    bundle.findings = [first, second]
+
+    context = _context(bundle, {})
+    assert len(context["summaries"]) == 2
+    detail, = context["details"]["undetermined"]
+    assert detail["identifiers"] == ["FIXTURE-2", "FIXTURE-3"]
+    assert detail["missing_info"][0]["where"] == "app-settings.json:3-5"
+    assert {ref for item in context["decision_evidence"] for ref in item["ids"]} == {
+        "evidence-0001", "lookup-0001", "lookup-0002",
+    }
+
+
 def test_pdf_extracts_korean_report_and_work_request(bundle, tmp_path):
+    bundle.anomalies.append(Anomaly(kind="stage_failure", message="judge 단계 실패 (RuntimeError)."))
+    bundle.findings[1].verdict.rationale_ko = ""
+    bundle.findings[1].verdict.item_results[0].reason = "배포 설정에 해당 입력이 없습니다."
+    bundle.findings[0].vulnerability.references.extend([
+        "https://osv.dev/vulnerability/fixture-note",
+        "https://github.com/advisories/fixture-note",
+        "https://docs.example.com/additional-reference",
+    ])
     extracted = _pdf_text(bundle, tmp_path / "report.pdf", lookup_sources=[
         {"name": "lookup.example.com", "retrieved_at": "2026-01-03T12:00:00Z"},
     ])
@@ -173,34 +221,38 @@ def test_pdf_extracts_korean_report_and_work_request(bundle, tmp_path):
     assert "fixture_extra" not in text
     assert "requirements-fixture.txt:1-2" in main
     assert "https://lookup.example.com/fixture-note" in main
-    assert "app-settings.json:3-5 [evidence-0001]" in appendix
-    assert "https://lookup.example.com/fixture-note [lookup-0002]" in appendix
+    citations = appendix.split("부록 · 추가 참고 링크", 1)[0]
+    assert "app-settings.json:3-5 [evidence-0001]" in citations
+    assert "https://lookup.example.com/fixture-note [lookup-0002]" in citations
     for unrelated in ("collect-0001", "collect-0002", "scope-0001", "lookup-0001", "pdf-0001"):
-        assert unrelated not in appendix
+        assert unrelated not in citations
     assert "unreferenced.fixture" not in text
 
     summary = main[main.index("먼저 고칠 것 3개"):main.index("입력 이상")]
     assert "FIXTURE-0 · fixture-parser · P1 · 목표 버전 1.2" in summary
     assert "FIXTURE-1" not in summary
     assert "FIXTURE-2" not in summary
-    assert main.count("lock_mismatch · 2건") == 1
-    assert "missing_metadata · 1건" in main
+    assert "점검 일부 실패: judge" in summary
+    assert "stage_failure · judge 단계 실패 (RuntimeError)." in main
+    assert "lock_mismatch · 총 3건 · 대표 사례 첫 번째 고정 버전이 다릅니다. requirements-fixture.txt:1-2" in main
+    assert "lock_mismatch · 두 번째 고정 버전이 다릅니다." in main
+    assert "missing_metadata · 구성요소 식별 정보가 없습니다." in main
     assert "점검 대상·범위" in main
     assert "생태계 pypi · 구성요소 2개" in main
-    assert "배포 포함" in main
-    assert "배포 제외" in main
-    assert "배포 여부 미확인" in main
-    file_scope = main[main.index("배포 파일 분류"):main.index("조회한 데이터 출처와 시점")]
-    file_scope = file_scope.replace("• ", "").replace("◦ ", "")
-    for phrase in (
-        "test checks/entry_check.py · 테스트 전용입니다.",
-        "legacy archive/entry.py · 보관용 파일입니다.",
-        "script tools/local.py · 로컬 도구입니다.",
-        "generated generated/model.py · 빌드 산출물에 포함됩니다.",
-        "vendored_bundle third_party/fixture.min.js · 실제 배포 파일을 확인해야 합니다.",
-        "Containerfile.fixture:8",
-    ):
-        assert phrase in file_scope
+    assert "배포 폴더 요약" in main
+    assert "배포됨 1개 파일 / 미배포 0개" in main
+    assert "배포됨 0개 파일 / 미배포 1개" in main
+    assert "Containerfile.fixture:8" in main
+    assert "확인 위치 app-settings.json:3-5" in main
+    assert "https://osv.dev/vulnerability/fixture-note" in main
+    assert "https://github.com/advisories/fixture-note" in main
+    assert "docs.example.com" not in main
+    assert "docs.example.com" in appendix
+    assert "영향 없음 상세" not in main
+    assert "배포 설정에 해당 입력이 없습니다." in main
+    for phrase in ("test · entry_check.py", "legacy · entry.py", "script · local.py",
+                   "generated · model.py", "vendored_bundle · fixture.min.js"):
+        assert phrase in appendix
     for phrase in ("lookup.example.com", "2026-01-03T12:00:00Z", "2026-01-02"):
         assert phrase in main
 

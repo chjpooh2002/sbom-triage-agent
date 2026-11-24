@@ -1,6 +1,7 @@
 """출력 형식 간에 공유하는 판정과 근거 처리."""
+import os
 from pathlib import Path
-from tempfile import NamedTemporaryFile
+from tempfile import TemporaryDirectory
 from urllib.parse import urlsplit
 
 from triage.models import Evidence, Finding, Status, TriageBundle
@@ -57,12 +58,10 @@ def file_location(item: Evidence) -> str:
 def write_artifact(out: Path, content: bytes) -> None:
     """완성된 산출물만 최종 경로에 둔다."""
     out.parent.mkdir(parents=True, exist_ok=True)
-    with NamedTemporaryFile(dir=out.parent, delete=False) as handle:
-        temporary = Path(handle.name)
-        try:
+    with TemporaryDirectory(dir=out.parent) as directory:
+        temporary = Path(directory) / out.name
+        flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_BINARY", 0)
+        # 생성 시점에 umask가 적용된다. 교체 전에는 비공개 임시 디렉터리에 둔다.
+        with os.fdopen(os.open(temporary, flags, 0o644), "wb") as handle:
             handle.write(content)
-            handle.close()
-            temporary.replace(out)
-        finally:
-            handle.close()
-            temporary.unlink(missing_ok=True)
+        temporary.replace(out)

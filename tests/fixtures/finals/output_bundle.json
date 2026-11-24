@@ -78,7 +78,7 @@
     {"path": "third_party/fixture.min.js", "deployed": "unknown", "category": "vendored_bundle", "reason": "실제 배포 파일을 확인해야 합니다."}
   ],
   "anomalies": [
-    {"kind": "lock_mismatch", "message": "첫 번째 고정 버전이 다릅니다.", "evidence_ids": ["collect-0001"]},
+    {"kind": "lock_mismatch", "message": "총 3건 · 대표 사례 첫 번째 고정 버전이 다릅니다.", "evidence_ids": ["collect-0001"]},
     {"kind": "lock_mismatch", "message": "두 번째 고정 버전이 다릅니다."},
     {"kind": "missing_metadata", "message": "구성요소 식별 정보가 없습니다."}
   ]
