@@ -364,3 +364,11 @@ def test_code_after_docstring_is_not_comment(tmp_path):
                       fix="", just="code_not_present")
     assert "comment_only_evidence" in {
         v.rule for v in check(docline, finding=finding(), checklist=CHECKLIST, store=store, scope=scope)}
+
+
+def test_only_cited_evidence_is_exported(tmp_path):
+    out, evidence, anomalies = run(tmp_path, Fake([lambda m: good(app_id(m))]))
+    exported = {e.id for e in evidence} - {e.id for e in base_evidence()}
+    cited = {e for r in out[0].verdict.item_results for e in r.evidence_ids}
+    cited |= {e for a in anomalies for e in a.evidence_ids}
+    assert exported and exported <= cited

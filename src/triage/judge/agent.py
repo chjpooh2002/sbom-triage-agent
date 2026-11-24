@@ -241,7 +241,8 @@ def judge_all(findings: list[Finding], evidence: list[Evidence], files: list[Sou
               usage=None) -> list[Finding]:
     """후보마다 Finding.verdict 를 채운 사본을 돌려준다.
 
-    - 판정 중 새로 만든 근거는 ``evidence`` 목록 끝에 덧붙인다(판정이 가리키는 ID가 모두 그 안에 있도록).
+    - 판정 중 새로 만든 근거 가운데 판정·이상 기록이 가리키는 것을 ``evidence`` 목록 끝에 덧붙인다
+      (판정이 가리키는 ID가 모두 그 안에 있도록).
     - 판정 지시처럼 보이는 주석은 ``anomalies`` 목록(주어지면)에 덧붙인다.
     - ``log`` 는 ``log(stage, event, **data)``. RunLog.emit 을 넘기면 토큰 사용량도 같은 RunLog 에 합산한다.
     """
@@ -302,12 +303,16 @@ def judge_all(findings: list[Finding], evidence: list[Evidence], files: list[Sou
              verifier_notes=v.verifier_notes)
     unique = {(a.kind, a.message): a for a in found}
     found = list(unique.values())
-    # 가져오기 분석 근거는 양이 많으니 판정·이상 기록이 실제로 가리킨 것만 내보낸다
+    # 판정 중 만든 근거(검색 결과 등)는 양이 많으니 판정·이상 기록이 실제로 가리킨 것만 내보낸다.
+    # 도구 호출과 결과 근거 ID는 실행 로그(judge.tool, evidence.renumber)에 그대로 남는다.
     cited = {e for f in results.values() for r in f.verdict.item_results for e in r.evidence_ids}
     cited |= {e for a in found for e in a.evidence_ids}
-    cited |= set(_ID.findall(" ".join(f.verdict.rationale_ko for f in results.values())))
-    evidence.extend([e for e in import_ev if e.id in cited])
-    evidence.extend(new_evidence)
+    texts = [t for f in results.values() for t in (f.verdict.rationale_ko, *f.verdict.verifier_notes,
+                                                   *(m.what + " " + m.where for m in f.verdict.missing_info))]
+    cited |= set(_ID.findall(" ".join(texts)))
+    exported = [e for e in [*import_ev, *new_evidence] if e.id in cited]
+    evidence.extend(exported)
+    new_evidence = exported
     if anomalies is not None:
         anomalies.extend(found)
     states = {}
