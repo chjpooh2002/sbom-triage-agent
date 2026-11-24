@@ -1,4 +1,4 @@
-"""권고문 → 발생 조건 점검표(Checklist). 취약점 ID별 디스크 캐시."""
+"""권고문 → 발생 조건 점검표(Checklist). 취약점 ID별 디스크 캐시(SBOMTRIAGE_LLM_CACHE 로 끄고 켬)."""
 from __future__ import annotations
 
 import json
@@ -104,46 +104,67 @@ def _lock(vuln_id: str) -> threading.Lock:
 
 
 def build_checklist(finding: Finding, client: LLMClient | None, settings: Settings,
-                    log=None) -> Checklist:
-    """모델이 없거나 거절·실패하면 결정적 기본 점검표(패키지 사용 여부 하나)."""
+                    log=None, memo: dict | None = None) -> Checklist:
+    """모델이 없거나 거절·실패하면 결정적 기본 점검표(패키지 사용 여부 하나).
+
+    - 디스크 캐시(취약점 ID별 파일)는 SBOMTRIAGE_LLM_CACHE=off 면 읽지도 쓰지도 않는다.
+    - ``memo`` 는 한 번의 실행 안에서만 쓰는 메모리 사본이다. 같은 취약점·같은 패키지 후보가
+      여럿이어도 점검표를 한 번만 만들어 같은 기준으로 판정한다(캐시 off 에서도 유지).
+    """
     if client is None:
         return fallback_checklist(finding, "모델 미설정")
     prompt = load_prompt("checklist")
     c = finding.component
     entry = f"{c.ecosystem}:{package_label(c)}|{client.model}|{prompt.version}"
-    path = _cache_path(settings, finding.vulnerability.id)
-    with _lock(finding.vulnerability.id):
-        try:
-            cached = json.loads(path.read_text(encoding="utf-8")).get(entry)
-        except (OSError, ValueError):
-            cached = None
+    vid = finding.vulnerability.id
+    path = _cache_path(settings, vid)
+    with _lock(vid):
+        if memo is not None and (vid, entry) in memo:
+            checklist = memo[(vid, entry)]
+            if log:
+                log("judge", "checklist", vuln=vid, cached=False, reused=True, items=len(checklist.items))
+            return checklist
+        cached = None
+        if settings.llm_cache:
+            try:
+                cached = json.loads(path.read_text(encoding="utf-8")).get(entry)
+            except (OSError, ValueError):
+                cached = None
         if cached:
             checklist = Checklist.model_validate(cached)
+            client.count("checklist_cache_hits")
             if log:
-                log("judge", "checklist", vuln=finding.vulnerability.id, cached=True, items=len(checklist.items))
-            return checklist
+                log("judge", "checklist", vuln=vid, cached=True, items=len(checklist.items))
+            return _remember(memo, vid, entry, checklist)
         messages = [{"role": "system", "content": prompt.text},
                     {"role": "user", "content": advisory_text(finding, settings)}]
         try:
             reply = client.complete(purpose="checklist", prompt_version=prompt.version, messages=messages,
-                                    schema=schema(), schema_name="checklist", subject=finding.vulnerability.id)
-        except ModelError as e:
+                                    schema=schema(), schema_name="checklist", subject=vid)
+        except ModelError as e:   # 메시지는 예외 종류·상태 코드로만 만든 것(client.py)
             return fallback_checklist(finding, f"점검표 모델 호출 실패: {e}")
         if reply.refused or reply.data is None:
             return fallback_checklist(finding, "점검표 모델 거절")
         checklist, dropped = normalize(reply.data, finding, settings, client.model, entry)
         if log:
-            log("judge", "checklist", vuln=finding.vulnerability.id, cached=False, items=len(checklist.items),
+            log("judge", "checklist", vuln=vid, cached=False, items=len(checklist.items),
                 dropped_version_items=dropped)
         if not checklist.items:
             return fallback_checklist(finding, "점검표 항목 없음")
-        try:
-            doc = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
-        except (OSError, ValueError):
-            doc = {}
-        doc[entry] = checklist.model_dump(mode="json")
-        path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = path.with_suffix(f".{os.getpid()}.{time.monotonic_ns()}.tmp")
-        tmp.write_text(json.dumps(doc, ensure_ascii=False, indent=1), encoding="utf-8")
-        os.replace(tmp, path)
-        return checklist
+        if settings.llm_cache:
+            try:
+                doc = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+            except (OSError, ValueError):
+                doc = {}
+            doc[entry] = checklist.model_dump(mode="json")
+            path.parent.mkdir(parents=True, exist_ok=True)
+            tmp = path.with_suffix(f".{os.getpid()}.{time.monotonic_ns()}.tmp")
+            tmp.write_text(json.dumps(doc, ensure_ascii=False, indent=1), encoding="utf-8")
+            os.replace(tmp, path)
+        return _remember(memo, vid, entry, checklist)
+
+
+def _remember(memo: dict | None, vid: str, entry: str, checklist: Checklist) -> Checklist:
+    if memo is not None:
+        memo[(vid, entry)] = checklist
+    return checklist

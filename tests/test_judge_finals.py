@@ -204,7 +204,9 @@ class Fake:
 def settings(tmp_path, **kw):
     kw.setdefault("workers", 1)
     kw.setdefault("escalate_model", "")   # 실제 승급 모델을 만들지 않게
-    return load_settings(cache_dir=tmp_path, backoff_seconds=0, **kw)
+    kw.setdefault("llm_cache", True)      # .env·환경변수와 무관하게 캐시 동작을 고정
+    kw.setdefault("backoff_seconds", 0)
+    return load_settings(cache_dir=tmp_path, **kw)
 
 
 def client(tmp_path, fake, model="fake-small", log=None, usage=None, **kw):
@@ -373,3 +375,130 @@ def test_only_cited_evidence_is_exported(tmp_path):
     cited = {e for r in out[0].verdict.item_results for e in r.evidence_ids}
     cited |= {e for a in anomalies for e in a.evidence_ids}
     assert exported and exported <= cited
+
+
+# ───────────────────────── 캐시 스위치·실행 집계·오류 기록 ─────────────────────────
+
+ARGS = dict(purpose="decide", prompt_version="p1", messages=[{"role": "user", "content": "hi"}],
+            schema={"type": "object"}, schema_name="decision")
+SECRET = "C:/Users/someone/secret_config.py 게이트웨이 응답 본문 sk-hidden"
+
+
+def cached_files(tmp_path):
+    return sorted(p.name for p in tmp_path.rglob("*.json"))
+
+
+def test_llm_cache_off_calls_model_every_time_and_writes_nothing(tmp_path):
+    fake = Fake([verdict("undetermined", missing=["x"], fix="")] * 2)
+    c = client(tmp_path, fake, llm_cache=False)
+    first, second = c.complete(**ARGS), c.complete(**ARGS)
+    assert first.data and second.data and not first.cached and not second.cached
+    assert fake.calls == ["decision", "decision"]           # 같은 요청도 두 번 모두 전송
+    assert cached_files(tmp_path) == []                       # 캐시 파일을 만들지 않는다
+    assert c.counts["llm_calls"] == 2 and c.counts["cache_hits"] == 0
+
+
+def test_checklist_cache_off_skips_disk_but_reuses_within_run(tmp_path):
+    fake = Fake()
+    c = client(tmp_path, fake, llm_cache=False)
+    build_checklist(finding(), c, c.settings)
+    build_checklist(finding(), c, c.settings)
+    assert fake.calls == ["checklist", "checklist"]          # 디스크 캐시를 읽지 않는다
+    assert cached_files(tmp_path) == []                       # 쓰지도 않는다
+    memo = {}
+    build_checklist(finding(), c, c.settings, memo=memo)
+    build_checklist(finding(), c, c.settings, memo=memo)
+    assert fake.calls == ["checklist"] * 3                    # 한 실행 안에서는 한 번만 만든다
+
+
+def _end(events):
+    return [d for e, d in events if e == "end"][-1]
+
+
+def test_end_event_reports_calls_cache_hits_and_mode(tmp_path):
+    runs = []
+    for _ in range(2):
+        events = []
+        run(tmp_path / "on", Fake([lambda m: good(app_id(m))]), events=events)
+        runs.append(_end(events))
+    assert runs[0]["cache_mode"] == "on" and runs[0]["llm_calls"] == 2 and runs[0]["cache_hits"] == 0
+    assert runs[1]["llm_calls"] == 0 and runs[1]["cache_hits"] == 2   # 두 번째는 점검표·판정 모두 캐시
+
+    runs = []
+    for _ in range(2):
+        events = []
+        run(tmp_path / "off", Fake([lambda m: good(app_id(m))]), events=events, llm_cache=False)
+        runs.append(_end(events))
+    assert [(r["cache_mode"], r["llm_calls"], r["cache_hits"]) for r in runs] == [("off", 2, 0), ("off", 2, 0)]
+    assert cached_files(tmp_path / "off") == []
+    assert {"llm_retries", "workers", "seconds"} <= set(runs[0])
+
+
+def test_retry_waits_grow_exponentially(tmp_path):
+    events, waits = [], []
+    s = settings(tmp_path, backoff_seconds=1.0, max_attempts=3)
+    fake = Fake([TransientError("x", status=429), TransientError("x", status=503),
+                 verdict("undetermined", missing=["x"], fix="")])
+    c = LLMClient("fake-small", fake, s, log=lambda st, ev, **d: events.append((ev, d)), sleep=waits.append)
+    assert c.complete(**ARGS).data
+    assert waits == [1.0, 2.0]
+    retries = [d for e, d in events if e == "llm.retry"]
+    assert [(r["status"], r["wait_seconds"]) for r in retries] == [(429, 1.0), (503, 2.0)]
+    assert c.counts["retries"] == 2
+
+
+def test_error_events_keep_type_and_location_not_message(tmp_path):
+    events = []
+    log = lambda st, ev, **d: events.append((ev, d))
+    c = client(tmp_path, Fake([ModelError(SECRET, status=400)]), log=log)
+    with pytest.raises(ModelError) as raised:
+        c.complete(**ARGS)
+    assert SECRET not in str(raised.value)                    # 판정 기록으로 넘어가는 문구도 안전하게
+    t = client(tmp_path, Fake([TransientError(SECRET, status=502)] * 3), log=log)
+    with pytest.raises(ModelError):
+        t.complete(**{**ARGS, "messages": [{"role": "user", "content": "other"}]})
+
+    error = [d for e, d in events if e == "llm.error"][0]
+    assert (error["error"], error["status"]) == ("ModelError", 400) and re.search(r":\d+$", error["where"])
+    assert [d["status"] for e, d in events if e == "llm.retry"] == [502, 502, 502]
+
+    # 판정 중 예기치 못한 오류(전체 흐름): 예외 종류와 발생 위치(모듈:줄)만 남는다
+    out, _, _ = run(tmp_path / "flow", Fake([RuntimeError(SECRET)]), events=events, escalate=False)
+    crash = [d for e, d in events if e == "error"][0]
+    assert crash["error"] == "RuntimeError" and re.search(r"^[\w.]+:\d+$", crash["where"])
+    assert "trace" not in crash
+    assert out[0].verdict.state == "undetermined"
+    assert SECRET not in json.dumps(events, ensure_ascii=False, default=str)
+    assert SECRET not in out[0].verdict.model_dump_json()
+
+
+def test_workers_and_cache_env(monkeypatch):
+    monkeypatch.setenv("SBOMTRIAGE_JUDGE_WORKERS", "12")
+    monkeypatch.setenv("SBOMTRIAGE_LLM_CACHE", "off")
+    s = load_settings()
+    assert (s.workers, s.llm_cache) == (12, False)
+    for bad in ("0", "abc", "-3"):
+        monkeypatch.setenv("SBOMTRIAGE_JUDGE_WORKERS", bad)
+        with pytest.raises(ValueError):
+            load_settings()
+
+
+def test_progress_event_after_each_finding(tmp_path):
+    """규칙 판정 1건 + 모델 판정 2건(작업 스레드 3개). 실제 실행 로그와 on_event 콜백을 거쳐도 멈추지 않는다."""
+    from triage.output import RunLog
+
+    seen = []
+    runlog = RunLog(tmp_path / "log.jsonl", on_event=seen.append)
+    s = settings(tmp_path, workers=3)
+    fake = Fake([lambda m: good(app_id(m))] * 3)
+    judge_all([finding(), finding(in_range=False), finding()], base_evidence(), FILES, ROOT, log=runlog.emit,
+              settings=s, client=LLMClient("fake-small", fake, s, sleep=lambda x: None))
+    runlog.close(status="ok")
+
+    judge = [r for r in seen if r["stage"] == "judge"]
+    progress = [r["data"] for r in judge if r["event"] == "progress"]
+    assert [p["done"] for p in progress] == [1, 2, 3] and {p["total"] for p in progress} == {3}
+    order = [r["event"] for r in judge]
+    first = order.index("progress")
+    last = len(order) - 1 - order[::-1].index("progress")
+    assert order.index("start") < first and last < order.index("end")

@@ -1,14 +1,15 @@
 # 판정 에이전트(src/triage/judge) 설정. 숫자 기준값은 코드가 아니라 여기 둔다.
 # 단계 스위치는 환경변수로 켠다/끈다: SBOMTRIAGE_JUDGE, SBOMTRIAGE_VERIFY, SBOMTRIAGE_ESCALATE (on|off)
+# 모델 응답·점검표 디스크 캐시: SBOMTRIAGE_LLM_CACHE (on|off, 기본 on은 개발용. 회차별 실측·제출 실행은 off)
 
 model_call:
   max_attempts: 3            # 모델 호출 한 번당 최대 시도 횟수(네트워크·서버 오류·형식 오류)
-  backoff_seconds: 1.0       # 재시도 대기 시작값. 시도마다 두 배
+  backoff_seconds: 1.0       # 재시도 대기 시작값. 시도마다 두 배(429·5xx·연결 오류·형식 오류 모두)
   timeout_seconds: 60        # LLM_TIMEOUT 환경변수가 있으면 그 값을 쓴다
 
 decide:
   max_tool_calls: 3          # 판정 한 건당 모델이 추가로 부를 수 있는 도구 호출 수
-  workers: 4                 # 동시에 판정하는 후보 수
+  workers: 4                 # 동시에 판정하는 후보 수. SBOMTRIAGE_JUDGE_WORKERS 가 있으면 그 값
   max_symbols_per_item: 4    # 점검 항목 하나에서 미리 검색할 코드 기호 수
   max_config_keys_per_item: 3
   max_prompt_evidence_chars: 24000   # 판정 요청에 넣는 증거 본문 상한(넘으면 뒤쪽 생략 표시)
