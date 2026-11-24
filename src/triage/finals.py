@@ -116,6 +116,7 @@ def run_scan(
     if run_no < 1:
         raise ValueError("실행 번호는 1 이상이어야 합니다.")
 
+    source_arg = Path(root).as_posix()
     root, out_dir = Path(root).resolve(), Path(out_dir)
     started_at = datetime.now(timezone.utc)
     meta = {"label": label, "name": label, "scope": root.name or label,
@@ -289,7 +290,8 @@ def run_scan(
             bundle.meta["limitations"] = [f"취약점 조회에서 응답이나 캐시를 확보하지 못한 요청이 {lookup_misses}건 있습니다."]
         bundle.meta["incomplete_coverage"] = bool(lookup_misses or {"collect", "lookup"}.intersection(failures))
         with step("pdf"):
-            bundle.evidence.extend(render_pdf(bundle, meta, report_path, log=log))
+            report_meta = {**meta, "scan_source": source_arg, "scan_offline": offline}
+            bundle.evidence.extend(render_pdf(bundle, report_meta, report_path, log=log))
             paths["report"] = report_path
         completed = True
     finally:
