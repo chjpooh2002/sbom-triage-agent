@@ -57,6 +57,14 @@ DOWNLOADS = {
     "log": ("실행 기록 (JSONL)", "application/jsonl"),
 }
 
+# 콜론도 이스케이프해 Streamlit이 본문의 URL을 자동 링크로 읽지 않게 한다.
+_MD_ESCAPES = str.maketrans({c: "\\" + c for c in r"\`*_{}[]()#+-.!|><$~:"})
+
+
+def md_escape(text: str) -> str:
+    """외부 문자열이 Markdown 문법으로 해석되지 않도록 한 번만 치환한다."""
+    return text.translate(_MD_ESCAPES)
+
 
 def extract_zip(upload, root: Path) -> Path:
     if upload.size > ZIP_UPLOAD_LIMIT:
@@ -160,14 +168,14 @@ def show_evidence(ids, evidence) -> None:
     for evidence_id in dict.fromkeys(ids):
         item = evidence.get(evidence_id)
         if item is None:
-            st.caption(f"{evidence_id} · 근거를 찾을 수 없습니다.")
+            st.caption(f"{md_escape(evidence_id)} · 근거를 찾을 수 없습니다.")
             continue
         location = item.file
         if location and item.line_start is not None:
             location += f":{item.line_start}"
             if item.line_end and item.line_end > item.line_start:
                 location += f"–{item.line_end}"
-        st.caption(f"{item.id} · {location or item.note or '파일 위치 없음'}")
+        st.caption(f"{md_escape(item.id)} · {md_escape(location or item.note or '파일 위치 없음')}")
         if item.snippet:
             st.code(item.snippet, language=None)
         if url := public_url(item.url):
@@ -182,10 +190,10 @@ def show_detail(finding, evidence, remediation, checklist) -> None:
     from triage.output._common import public_url
 
     verdict = finding.verdict
-    explanation = (verdict.plain_ko or verdict.rationale_ko) if verdict else ""
-    st.markdown(explanation or finding.status_note or "판정 설명이 없습니다.")
+    explanation = reason_text(finding)
+    st.markdown(md_escape(explanation))
     if verdict and verdict.rationale_ko and verdict.rationale_ko != explanation:
-        st.markdown(verdict.rationale_ko)
+        st.markdown(md_escape(verdict.rationale_ko))
     if finding.component.evidence_ids:
         st.markdown("**설치 버전·배포 근거**")
         show_evidence(finding.component.evidence_ids, evidence)
@@ -200,10 +208,10 @@ def show_detail(finding, evidence, remediation, checklist) -> None:
         status = {"met": "충족", "not_met": "미충족"}.get(
             answer.status if answer else "", "확인 필요",
         )
-        st.markdown(f"{questions.get(key, key)} — {status}")
+        st.markdown(f"{md_escape(questions.get(key, key))} — {status}")
         if answer:
             if answer.reason:
-                st.caption(answer.reason)
+                st.caption(md_escape(answer.reason))
             show_evidence(answer.evidence_ids, evidence)
 
     references = dict.fromkeys(filter(None, map(public_url, finding.vulnerability.references)))
@@ -213,17 +221,17 @@ def show_detail(finding, evidence, remediation, checklist) -> None:
     if verdict and verdict.missing_info:
         st.markdown("**추가 확인**")
         for item in verdict.missing_info:
-            st.markdown(f"{item.what} · 확인할 곳 {item.where}")
+            st.markdown(f"{md_escape(item.what)} · 확인할 곳 {md_escape(item.where)}")
     if remediation:
         st.markdown("**조치 방법**")
         if remediation.target_version:
-            st.markdown(f"올릴 버전 {remediation.target_version}")
+            st.markdown(f"올릴 버전 {md_escape(remediation.target_version)}")
         for line in filter(None, [remediation.summary_ko, *remediation.steps, remediation.workaround]):
-            st.markdown(line)
+            st.markdown(md_escape(line))
         st.markdown("**검증 방법과 결과**")
         st.markdown("목표 버전 확인 완료" if remediation.verified else "목표 버전 확인 필요")
         for note in remediation.verify_notes:
-            st.markdown(note)
+            st.markdown(md_escape(note))
     elif not verdict or verdict.state != "not_affected":
         st.caption("기록된 조치·검증 방법이 없습니다.")
     if verdict and verdict.work_request:
@@ -257,8 +265,8 @@ def show_search(query, findings, membership):
     st.subheader(f"검색 결과 {len(hits)}건")
     matched = set()
     for f in hits:
-        st.markdown(f"{finding_label(f)} · {STATE_LABELS[finding_state(f)]}")
-        st.markdown((f.verdict.rationale_ko if f.verdict else "") or reason_text(f))
+        st.markdown(f"{md_escape(finding_label(f))} · {STATE_LABELS[finding_state(f)]}")
+        st.markdown(md_escape((f.verdict.rationale_ko if f.verdict else "") or reason_text(f)))
         if index := membership.get(f.key):
             matched.add(index)
             st.markdown(f"[할 일 {index}로 이동](#action-{index})")
@@ -277,11 +285,11 @@ def show_card(action, index, expanded, findings, evidence, plans, checklists, co
     else:
         current = top.component.display if top.component.version else f"{top.component.display} (버전 미상)"
     target = action.target or ("영향 확인 후 결정" if action.kind == "confirm" else "목표 버전 확인 필요")
-    title = f"{index}. {kind} · {current} → {target} · 관련 취약점 {len(members)}건"
+    title = f"{index}. {kind} · {md_escape(current)} → {md_escape(target)} · 관련 취약점 {len(members)}건"
     with st.expander(title, expanded=expanded):
         st.caption(f"영향 있음 {action.counts['affected']}건 · 확인 필요 {action.counts['undetermined']}건")
         st.markdown("**무슨 일이 생기나**")
-        st.markdown(reason_text(top))
+        st.markdown(md_escape(reason_text(top)))
         st.markdown("**어디서**")
         if action.evidence_ids:
             show_evidence(action.evidence_ids, evidence)
@@ -291,7 +299,7 @@ def show_card(action, index, expanded, findings, evidence, plans, checklists, co
         st.markdown("**무엇을 확인하나**" if action.kind == "confirm" else "**어떻게 고치나**")
         if action.kind == "confirm":
             for item in action.missing_info:
-                st.markdown(f"{item.what} · 확인할 곳 {item.where}")
+                st.markdown(f"{md_escape(item.what)} · 확인할 곳 {md_escape(item.where)}")
             if not action.missing_info:
                 st.caption("추가 확인 항목이 기록되지 않았습니다.")
         finding_keys = set(action.findings)
@@ -301,26 +309,26 @@ def show_card(action, index, expanded, findings, evidence, plans, checklists, co
                 st.markdown("**어떻게 고치나**")
             for item in matching:
                 if item["kind"] == "change":
-                    st.caption(f"{item['file']}:{item['line']}")
+                    st.caption(f"{md_escape(item['file'])}:{item['line']}")
                     st.code(f"-{item['before']}\n+{item['after']}", language="diff")
                 elif item["kind"] == "manual":
-                    st.markdown(f"수동 확인 · {item['reason']}")
+                    st.markdown(f"수동 확인 · {md_escape(item['reason'])}")
         elif action.kind != "confirm":
             if action.target:
-                st.markdown(f"교체 목표 {action.target}")
+                st.markdown(f"교체 목표 {md_escape(action.target)}")
             relevant = [plans[f.key] for f in members if f.key in plans and plans[f.key].target_version == action.target]
             if relevant:
                 steps = dict.fromkeys(step for plan in relevant for step in plan.steps)
                 if steps:
-                    st.markdown("\n".join(f"{i}. {step}" for i, step in enumerate(steps, 1)))
+                    st.markdown("\n".join(f"{i}. {md_escape(step)}" for i, step in enumerate(steps, 1)))
                 if not all(plan.verified for plan in relevant):
                     st.caption("목표 버전 확인 필요")
             else:
                 fixes = dict.fromkeys(v for f in members for v in f.vulnerability.fixed_versions)
-                st.caption("목표 버전 확인 필요 · 조회된 수정 버전 " + (", ".join(fixes) or "없음"))
+                st.caption("목표 버전 확인 필요 · 조회된 수정 버전 " + (", ".join(map(md_escape, fixes)) or "없음"))
         st.markdown("**누구에게**")
         if request := action.work_request:
-            st.markdown(f"받는 팀 {action.team}")
+            st.markdown(f"받는 팀 {md_escape(action.team)}")
             st.code("\n".join([request.title, request.body, *request.branches]), language=None)
         else:
             st.caption("대표 판정에 지정된 팀과 업무 요청서가 없습니다.")
@@ -329,14 +337,14 @@ def show_card(action, index, expanded, findings, evidence, plans, checklists, co
             st.markdown(f"전체 변경안 재점검 · 해소 **{len(fix_check['resolved'])}건** · "
                         f"남음 **{len(fix_check['remaining'])}건** · 새로 생김 **{len(fix_check['new'])}건**")
         elif reason := fix_check.get("reason"):
-            st.caption(reason)
+            st.caption(md_escape(reason))
         st.code(command, language=None)
         details = st.expander(f"포함된 취약점 {len(action.findings)}건", key=f"details_{index}", on_change="rerun")
         if details.open:
             with details:
                 for key in action.findings:
                     finding = findings[key]
-                    st.markdown(f"{finding_label(finding)} · {STATE_LABELS[finding_state(finding)]}")
+                    st.markdown(f"{md_escape(finding_label(finding))} · {STATE_LABELS[finding_state(finding)]}")
                     checklist = checklists.get(key, {})
                     if not isinstance(checklist, Mapping):
                         checklist = checklist.model_dump()
@@ -348,16 +356,16 @@ def show_results(bundle, downloads, failures, command=None) -> None:
     counts = Counter(map(finding_state, bundle.findings))
     for anomaly in bundle.anomalies:
         if anomaly.kind == "judge_degraded":
-            st.error(Redactor().text(anomaly.message))
+            st.error(md_escape(Redactor().text(anomaly.message)))
     metrics = [("오늘 할 일", len(actions)), ("영향 있음", counts["affected"]),
                ("확인 필요", counts["undetermined"]), ("영향 없음", counts["not_affected"])]
     for column, (label, value) in zip(st.columns(4), metrics):
         column.metric(label, value)
 
     if counts["affected"]:
-        conclusion = f"먼저 고칠 것은 {actions[0].component}입니다."
+        conclusion = f"먼저 고칠 것은 {md_escape(actions[0].component)}입니다."
     elif actions:
-        conclusion = f"먼저 확인할 것은 {actions[0].component}의 영향 조건입니다."
+        conclusion = f"먼저 확인할 것은 {md_escape(actions[0].component)}의 영향 조건입니다."
     elif bundle.findings:
         conclusion = "모든 후보가 영향 없음으로 판정되어 먼저 확인할 것이 없습니다."
     else:
@@ -367,9 +375,9 @@ def show_results(bundle, downloads, failures, command=None) -> None:
     if failures:
         st.warning("일부 단계 실패")
         for stage, reason in failures.items():
-            st.markdown(f"{stage_label(stage)} · {reason}")
+            st.markdown(f"{stage_label(stage)} · {md_escape(reason)}")
     for limitation in bundle.meta.get("limitations", []):
-        st.warning(limitation)
+        st.warning(md_escape(limitation))
     membership = {key: index for index, action in enumerate(actions, 1) for key in action.findings}
     matched = show_search(query, bundle.findings, membership) if query else set()
     evidence = {e.id: e for e in bundle.evidence}
@@ -389,11 +397,11 @@ def show_results(bundle, downloads, failures, command=None) -> None:
         for item in other_anomalies:
             if item.kind in {"instruction_like_comment", "stage_failure"}:
                 label = ("판정을 유도하는 주석을 발견했습니다 — 근거로 쓰지 않았습니다"
-                         if item.kind == "instruction_like_comment" else item.message)
-                locations = [file_location(evidence[r]) for r in item.evidence_ids if r in evidence]
+                         if item.kind == "instruction_like_comment" else md_escape(item.message))
+                locations = [md_escape(file_location(evidence[r])) for r in item.evidence_ids if r in evidence]
                 st.warning(" · ".join(filter(None, [label, *dict.fromkeys(locations)])))
             else:
-                st.markdown(item.message)
+                st.markdown(md_escape(item.message))
     unaffected = defaultdict(list)
     for f in bundle.findings:
         if finding_state(f) == "not_affected":
@@ -401,7 +409,8 @@ def show_results(bundle, downloads, failures, command=None) -> None:
     with st.expander(f"영향 없음 {counts['not_affected']}건"):
         for members in unaffected.values():
             first = members[0]
-            st.markdown(f"{first.component.display} · {len(members)}건 · 대표 사유 {reason_text(first)}")
+            st.markdown(f"{md_escape(first.component.display)} · {len(members)}건 · "
+                        f"대표 사유 {md_escape(reason_text(first))}")
 
     st.subheader("내려받기")
     for kind, (label, mime) in DOWNLOADS.items():
