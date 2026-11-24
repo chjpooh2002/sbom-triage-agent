@@ -18,7 +18,7 @@ def test_actions_preserve_verdicts_and_group_only_covered_candidates(bundle):
     before = bundle.model_dump()
     upgrade, image, confirm = build_actions(bundle)
     assert [(a.kind, a.findings, a.target, a.counts) for a in [upgrade, image, confirm]] == [
-        ("upgrade", ["finding-1", "finding-2"], "2.0", {"affected": 1, "undetermined": 1}),
+        ("upgrade", ["finding-1", "finding-2"], "1.8", {"affected": 1, "undetermined": 1}),
         ("base_image", ["finding-4", "finding-5"], "4.8.10", {"affected": 0, "undetermined": 2}),
         ("confirm", ["finding-3"], "", {"affected": 0, "undetermined": 1}),
     ]
@@ -51,7 +51,7 @@ def test_uncertain_or_older_fix_stays_in_confirmation(bundle, fix):
 
 
 def test_known_affected_target_stays_pending(bundle):
-    bundle.findings[1].vulnerability.affected_ranges = [">=2.0,<2.2"]
+    bundle.findings[1].vulnerability.affected_ranges = [">=1.8,<2.2"]
     assert build_actions(bundle)[0].findings == ["finding-1"]
 
 
@@ -75,3 +75,18 @@ def test_multiple_images_share_dockerfile_action_without_crossing_version_lines(
     assert len(image.findings) == 2
     assert "second:9.2" in image.title and "demo:4.8-slim" in image.title
     assert image.target == "같은 줄 최신 패치"
+
+
+def test_upgrade_fallback_uses_highest_of_minimum_line_fixes(bundle):
+    first, second = bundle.findings[:2]
+    second.verdict.state = "affected"
+    first.vulnerability.fixed_versions = ["0.9", "1.1", "1.8", "3.0"]
+    second.vulnerability.fixed_versions = ["2.0", "1.9", "1.4"]
+    assert build_actions(bundle)[0].target == "1.4"
+
+
+def test_no_same_major_fix_requires_target_confirmation(bundle):
+    bundle.findings[0].vulnerability.fixed_versions = ["0.9", "1.0", "2.0", "3.1"]
+    upgrade, _, confirm = build_actions(bundle)
+    assert upgrade.target == "" and upgrade.findings == ["finding-1"]
+    assert set(confirm.findings) == {"finding-2", "finding-3"}

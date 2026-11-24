@@ -11,7 +11,7 @@ from univers.versions import Version
 
 from .models import Component, Finding, MissingInfo, TriageBundle, WorkRequest
 from .output._common import finding_evidence, finding_state
-from .remediation.versions import V, cmp, in_range
+from .remediation.versions import V, cmp, fix_for_line, in_range, major
 
 _SEVERITY = {"critical": 4, "high": 3, "medium": 2, "low": 1}
 _MINOR = re.compile(r"^v?(\d+)\.(\d+)(?=[.\-+]|$)")
@@ -43,6 +43,15 @@ def _concrete(value: str, eco: str) -> bool:
 def _highest(versions, eco: str) -> str:
     candidates = sorted({v for v in versions if v and _concrete(v, eco)})
     return max(candidates, key=cmp_to_key(lambda a, b: cmp(a, b, eco)), default="")
+
+
+def _minimum_line_fix(finding: Finding) -> str | None:
+    installed, eco = finding.component.version, finding.component.ecosystem
+    if not _concrete(installed, eco):
+        return None
+    fixed = [v for v in finding.vulnerability.fixed_versions
+             if _concrete(v, eco) and major(v) == major(installed)]
+    return fix_for_line(installed, fixed, eco)
 
 
 def _covered(finding: Finding, target: str) -> bool:
@@ -144,7 +153,7 @@ def build_actions(bundle: TriageBundle) -> list[Action]:
         if affected:
             eco = affected[0].component.ecosystem
             targets = [plans[f.key].target_version for f in affected if f.key in plans and plans[f.key].target_version]
-            target = _highest(targets or [v for f in affected for v in f.vulnerability.fixed_versions], eco)
+            target = _highest(targets or [_minimum_line_fix(f) for f in affected], eco)
             covered = [f for f in pending if _covered(f, target)]
             actions.append(action("upgrade", [*affected, *covered], target))
             covered_keys = {f.key for f in covered}
