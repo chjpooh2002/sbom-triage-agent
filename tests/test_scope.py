@@ -51,14 +51,40 @@ def test_final_copy_ignore_classification_and_install_tools():
 
 def test_maven_selected_project_and_reactor_dependencies():
     components = [Component(id=f"maven:{name}", name=name, module=module, ecosystem="maven", scope=scope)
-                  for name, module, scope in [("network", "entry", "runtime"), ("codec", "shared", "runtime"),
-                                              ("formatter", "unused", "runtime"), ("checker", "entry", "test"),
+                  for name, module, scope in [("network", "app", "runtime"), ("codec", "shared", "runtime"),
+                                              ("formatter", "unused", "runtime"), ("checker", "app", "test"),
                                               ("other", "outside", "runtime")]]
     result = apply_scope(FIXTURES / "scope-maven", components)
     assert [item.deployed for item in result.components] == ["yes", "yes", "no", "no", "unknown"]
     refs = {item.id: item for item in result.evidence}
-    assert any("--also-make" in refs[ref].snippet for ref in result.components[1].evidence_ids)
-    assert {refs[ref].file for ref in result.components[1].evidence_ids} >= {"entry/pom.xml", "shared/pom.xml"}
+    assert any("-am" in refs[ref].snippet for ref in result.components[1].evidence_ids)
+    assert {refs[ref].file for ref in result.components[1].evidence_ids} >= {"app/pom.xml", "shared/pom.xml"}
+    _assert_evidence(result)
+
+
+def test_maven_multistage_archive_tracks_sources_images_and_inherited_runtime():
+    parent_runtime = Component(id="inherited", name="parent-runtime", group="example.libs", ecosystem="maven",
+                               module="app", scope="runtime", sources=["pom.xml", "app/pom.xml"])
+    components = [parent_runtime,
+                  parent_runtime.model_copy(update={"id": "excluded", "module": "unused", "sources": ["pom.xml"]}),
+                  Component(id="build-image", name="maven", version="3", kind="base-image", version_source="dockerfile"),
+                  Component(id="final-image", name="eclipse-temurin", version="21-jre", kind="base-image",
+                            version_source="dockerfile")]
+    result = apply_scope(FIXTURES / "scope-maven", components)
+    assert [component.deployed for component in result.components] == ["yes", "no", "no", "yes"]
+    assert result.components[0].version == ""
+    assert "빌드 전용" in result.components[2].deployed_reason
+
+    files = {file.path: file for file in result.files}
+    refs = {item.id: item for item in result.evidence}
+    for path in ("app/src/main/java/Main.java", "app/src/main/resources/defaults.properties",
+                 "shared/src/main/java/Shared.java"):
+        file = files[path]
+        assert file.deployed == "yes"
+        assert "빌드 산출물로 포함" in file.reason
+        assert {refs[ref].line_start for ref in file.evidence_ids if refs[ref].file == "Dockerfile"} >= {4, 7}
+    assert files["unused/src/main/java/Unused.java"].deployed == "no"
+    assert files["app/src/test/java/MainTest.java"].deployed == "no"
     _assert_evidence(result)
 
 
