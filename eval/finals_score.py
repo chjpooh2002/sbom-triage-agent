@@ -10,12 +10,14 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
 
+import httpx
+
 from triage.lookup import CACHE_DIR
 
 if __package__:
-    from ._osv_cache import OsvCache
+    from ._osv_cache import FetchResult, OsvCache
 else:
-    from _osv_cache import OsvCache
+    from _osv_cache import FetchResult, OsvCache
 
 
 DEFAULT_GOLD = Path("eval/gold_finals.csv")
@@ -310,7 +312,7 @@ def agreement(first: list[Candidate], second: list[Candidate], gold: Iterable[Go
     return Ratio(hits, total)
 
 
-def render(label: str, result: Score, repeat: Ratio | None = None) -> str:
+def render(label: str, result: Score, repeat: Ratio | None = None, fetched: FetchResult | None = None) -> str:
     metrics = [
         ("core 정확 일치율 (엄격)", result.accuracy),
         ("core 정확 일치율 (버전 제외 인정)", result.accuracy_with_exclusions),
@@ -336,6 +338,10 @@ def render(label: str, result: Score, repeat: Ratio | None = None) -> str:
         lines.extend(f"- {entry.description}" for entry in sorted(entries, key=lambda entry: entry.description))
         if not entries:
             lines.append("없음")
+    if fetched is not None:
+        lines.extend(["", "## 누락 OSV 상세 권고 조회", ""])
+        for title, items in (("받은 ID", fetched.received), ("실패한 ID", fetched.failed)):
+            lines.append(f"- {title} ({len(items)}) — {', '.join(items) or '없음'}")
     return "\n".join(lines) + "\n"
 
 
@@ -360,6 +366,8 @@ def main() -> None:
     add_inputs(parser)
     parser.add_argument("--sbom", type=Path, help="기본값은 <out>/sbom-<라벨>.json")
     parser.add_argument("--run2", type=Path, help="반복 비교용 두 번째 SBOM 경로")
+    parser.add_argument("--fetch-missing", action="store_true",
+                        help="SBOM에 누락된 core 행의 캐시 없는 OSV 상세 권고 조회 (네트워크 필요)")
     args = parser.parse_args()
     try:
         label = checked_label(args.label)
@@ -370,7 +378,17 @@ def main() -> None:
         if args.run2:
             _, second = load_run(args.run2, gold, label, cases[0].service)
             repeat = agreement(first, second, cases)
-        report = render(label, score(cases, first, OsvCache(args.osv_cache)), repeat)
+        cache = OsvCache(args.osv_cache)
+        fetched = None
+        if args.fetch_missing:
+            identifiers = (
+                (case.vuln_id, *sorted(case.aliases))
+                for group, entries in _matched_groups(cases, first) if not entries
+                for case in group if case.scoring_set == "core"
+            )
+            with httpx.Client(timeout=10) as client:
+                fetched = cache.fetch_missing(identifiers, client)
+        report = render(label, score(cases, first, cache), repeat, fetched)
         args.out.mkdir(parents=True, exist_ok=True)
         (args.out / f"score-{label}.md").write_text(report, encoding="utf-8")
     except (OSError, ValueError) as exc:

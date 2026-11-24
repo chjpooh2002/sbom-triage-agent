@@ -1,0 +1,9 @@
+[project]
+name = "demo-fixplan-project"
+version = "1.0.0"
+dependencies = [
+    "demo-toml-pin[cli]==2.1.0; python_version < '4'",
+]
+
+[tool.poetry.dependencies]
+demo-poetry-pin = "2.3.0"

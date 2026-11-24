@@ -1,5 +1,8 @@
 """근거와 조치 계획을 한국어 PDF로 내보낸다."""
+import os
 import re
+import shlex
+import unicodedata
 from collections import Counter, defaultdict
 from collections.abc import Callable, Iterable
 from pathlib import Path, PurePosixPath
@@ -158,6 +161,25 @@ def _compact(text: str, length: int) -> str:
     return one_line if len(one_line) <= length else one_line[:length - 1].rstrip() + "…"
 
 
+def _text_width(text: str) -> int:
+    return sum(2 if unicodedata.east_asian_width(char) in {"W", "F"} else 1 for char in text)
+
+
+def _summary_text(text: str, columns: int, *, tail: bool = False) -> str:
+    text = " ".join(text.split())
+    if _text_width(text) <= columns:
+        return text
+    # 파일 위치는 뒤쪽의 파일 이름·줄 번호를 우선 보존한다.
+    chars = []
+    space = columns - 1
+    for char in reversed(text) if tail else text:
+        space -= _text_width(char)
+        if space < 0:
+            break
+        chars.append(char)
+    return "…" + "".join(reversed(chars)) if tail else "".join(chars).rstrip() + "…"
+
+
 def _detail_groups(findings: list[dict], state: str) -> list[dict]:
     details = {}
     for item in findings:
@@ -196,20 +218,67 @@ def _detail_groups(findings: list[dict], state: str) -> list[dict]:
     return list(details.values())
 
 
-def _action_cards(bundle: TriageBundle, priorities, by_id) -> list[dict]:
+def _scan_command(meta: dict) -> str:
+    label = meta.get("label") or "재점검"
+    source = meta.get("scan_source") or "<점검할 소스 경로>"
+    args = ["uv", "run", "triage", "scan"]
+    if meta.get("scan_offline"):
+        args.append("--offline")
+    args.extend(["--", label, source, "out/recheck"])
+    if os.name == "nt":
+        # Windows 보고서의 실행 환경은 PowerShell이다.
+        return " ".join(arg if re.fullmatch(r"[\w./-]+", arg) else
+                        "'" + re.sub("[‘’‚‛']", lambda m: m[0] * 2, arg) + "'" for arg in args)
+    return shlex.join(args)
+
+
+def _check_summary(check: dict) -> str:
+    if not check:
+        return "재점검 전"
+    if check.get("status") != "ok":
+        return check.get("reason") or "재점검 결과 미확인"
+    counts = []
+    for key, label in (("resolved", "해소"), ("remaining", "남음"), ("new", "새로 생김")):
+        value = check.get(key)
+        count = len(value) if isinstance(value, list) else value
+        counts.append(f"{label} {count}건" if isinstance(count, int) else f"{label} 미기록")
+    return "전체 후보 · " + " · ".join(counts)
+
+
+def _action_cards(bundle: TriageBundle, priorities, by_id, decisions, fix_plan) -> list[dict]:
     # actions도 출력 공통 판정 함수를 사용하므로 PDF 렌더링 시점에 불러온다.
     from triage.actions import build_actions
 
     findings = {f.key: f for f in bundle.findings}
     plans = {r.finding_key: r for r in bundle.remediations}
+    edits_by_finding = defaultdict(list)
+    for index, edit in enumerate(fix_plan):
+        if edit.get("kind") in {"change", "manual"}:
+            for key in edit["findings"]:
+                edits_by_finding[key].append(index)
     cards = []
     for action in build_actions(bundle):
         priority = priorities.get(action.top_finding)
         members = [findings[key] for key in action.findings]
-        matching = [plans[f.key] for f in members if action.target and f.key in plans
-                    and plans[f.key].target_version == action.target]
+        matching = [plans[f.key] for f in members if f.key in plans
+                    and (plans[f.key].target_version or "") == action.target]
+        representative = next((f for f in members if finding_state(f) == "affected"), members[0])
+        decision = decisions[representative.key]
+        reason = decision["summary_reason"]
+        verdict = representative.verdict
+        if verdict and verdict.decided_by == "fallback" and verdict.verifier_notes:
+            reason = _compact(verdict.verifier_notes[0].partition("(")[0], 52)
+        indices = sorted({i for key in action.findings for i in edits_by_finding.get(key, ())})
+        edits = [fix_plan[i] for i in indices]
+        component = action.component
+        if edits:
+            component = next((f.component.display for f in members
+                              if f.component.id == edits[0]["component"]), component)
         cards.append({
             "title": action.title, "kind": action.kind, "target": action.target,
+            "component": component,
+            "state": _STATES[decision["state"]], "reason": reason,
+            "location": decision["location"], "edits": edits,
             "counts": action.counts,
             "verified": bool(matching) and all(r.verified for r in matching),
             "identifiers": list(dict.fromkeys(f.vulnerability.id for f in members)),
@@ -227,6 +296,7 @@ def _context(bundle: TriageBundle, meta: dict) -> dict:
     priorities = {priority.finding_key: priority for priority in bundle.results}
     by_id = {item.id: item for item in bundle.evidence}
     decision_ids = []
+    decisions = {}
     groups: dict[str, list[dict]] = {state: [] for state in _STATES}
     for finding in bundle.findings:
         verdict = finding.verdict
@@ -264,13 +334,14 @@ def _context(bundle: TriageBundle, meta: dict) -> dict:
             "link": links[0] if links else "",
             "shown_links": set(links[:1]),
         })
+        decisions[finding.key] = groups[state][-1]
     for findings in groups.values():
         findings.sort(key=lambda item: (
             item["priority"].get("tier", "P5"), item["priority"].get("rank") or float("inf"),
             item["vulnerability"]["id"], item["component"]["id"], item["asset"] or "",
         ))
     summaries = [item for findings in groups.values() for item in findings]
-    action_items = _action_cards(bundle, priorities, by_id)
+    action_items = _action_cards(bundle, priorities, by_id, decisions, bundle.meta.get("fix_plan") or [])
     details = {state: _detail_groups(groups[state], state) for state in ("affected", "undetermined")}
     extra_links = defaultdict(dict)
     for item in summaries:
@@ -293,6 +364,8 @@ def _context(bundle: TriageBundle, meta: dict) -> dict:
         "details": details,
         "top_actions": action_items[:3],
         "action_items": action_items,
+        "check_summary": _check_summary(bundle.meta.get("fix_check") or {}),
+        "scan_command": _scan_command(meta),
         "work_requests": work_requests,
         "states": _STATES,
         "deployment": _DEPLOYMENT,
@@ -325,6 +398,8 @@ def render_pdf(
     )
     environment.filters["public_url"] = public_url
     environment.filters["link_label"] = _link_label
+    environment.filters["summary_text"] = _summary_text
+    environment.filters["text_width"] = _text_width
     context = Redactor().value(_context(bundle, {**bundle.meta, **meta}))
     font = (_DIRECTORY / "fonts" / "NotoSansKR.ttf").resolve().as_uri()
     template = (_DIRECTORY / "report.html").read_text(encoding="utf-8")
