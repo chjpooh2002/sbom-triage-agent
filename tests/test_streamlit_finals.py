@@ -13,7 +13,8 @@ from zipfile import ZipFile, ZipInfo
 import pytest
 from streamlit.testing.v1 import AppTest
 
-from triage.models import Anomaly, TriageBundle
+from triage.actions import build_actions
+from triage.models import Anomaly, Remediation, TriageBundle
 
 
 APP = Path(__file__).resolve().parents[1] / "app" / "streamlit_app.py"
@@ -121,9 +122,9 @@ def test_finals_calls_pipeline_and_keeps_downloads(monkeypatch, tmp_path):
     assert app.error.values == [warning]
     assert warning not in app.text.values
     elements = list(app.main)
-    conclusion = next(h for h in app.subheader if h.value.startswith("오늘 할 일"))
+    conclusion = app.metric[0]
     assert elements.index(app.error[0]) < elements.index(conclusion)
-    assert all("먼저 고칠 것" not in h.value for h in app.subheader)
+    assert any("먼저 확인할 것" in value for value in app.markdown.values)
     assert calls[0][:2] == ("테스트 서비스", tmp_path.resolve())
     assert calls[0][3:] == (True, judge_provider)
     assert not calls[0][2].exists()
@@ -159,7 +160,7 @@ def test_partial_failure_keeps_available_downloads(monkeypatch, tmp_path):
     assert not app.exception
     assert not app.error
     assert app.warning[0].value == "일부 단계 실패"
-    assert any("PDF 보고서 생성 · 글꼴 없음" in item.value for item in app.text)
+    assert any("PDF 보고서 생성 · 글꼴 없음" in item.value for item in app.markdown)
     assert any("PDF 보고서 생성 — 실패" in item.value for item in app.text)
     assert len(app.get("download_button")) == 1
 
@@ -178,7 +179,7 @@ def test_pipeline_exception_only_displays_type_and_stage(monkeypatch, tmp_path):
     assert not app.get("download_button")
 
 
-def test_real_offline_scan_fills_all_three_downloads(monkeypatch):
+def test_real_offline_scan_fills_expected_downloads(monkeypatch):
     backend = real_backend()
     if backend is None or "on_event" not in inspect.signature(backend.run_scan).parameters:
         pytest.skip("점검 실행기의 on_event 계약이 아직 반영되지 않았습니다.")
@@ -190,16 +191,17 @@ def test_real_offline_scan_fills_all_three_downloads(monkeypatch):
     submit_server_path(app, SOURCE, offline=True)
     assert not app.exception
     assert not app.error
-    assert len(app.get("download_button")) == 3
+    assert len(app.get("download_button")) == 4
     _, downloads, failures = app.session_state["finals_result"]
     assert not failures
+    assert downloads["patch"][0].endswith(".patch")
     assert downloads["report"][1].startswith(b"%PDF-")
     assert json.loads(downloads["sbom"][1])["bomFormat"] == "CycloneDX"
     log = [json.loads(line) for line in downloads["log"][1].splitlines()]
     assert {record["stage"] for record in log} >= {"collect", "scope", "lookup", "judge", "cyclonedx", "pdf"}
     assert any("수집 — 완료" in item.value for item in app.text)
 
-def test_action_cards_search_details_and_threaded_progress(monkeypatch, tmp_path):
+def test_action_cards_search_details_and_threaded_progress(ui, monkeypatch, tmp_path):
     from streamlit.delta_generator import DeltaGenerator
 
     fixture = SOURCE.parent / "action_bundle.json"
@@ -228,17 +230,21 @@ def test_action_cards_search_details_and_threaded_progress(monkeypatch, tmp_path
     submit_server_path(app, tmp_path)
     assert not app.exception and not app.error
     assert ui_threads and scan_threads[0] not in ui_threads
-    assert app.subheader.values.count("오늘 할 일 3개 · 영향 있음 1건 · 확인 필요 4건 · 영향 없음 2건") == 1
+    assert [(m.label, m.value) for m in app.metric] == [
+        ("오늘 할 일", "3"), ("영향 있음", "1"), ("확인 필요", "4"), ("영향 없음", "2"),
+    ]
+    assert any("먼저 고칠 것" in value for value in app.markdown.values)
     cards = [x for x in app.expander if "관련 취약점" in x.label]
     assert len(cards) == 3 and all(x.proto.expanded for x in cards)
-    assert any("근거로 쓰지 않았습니다 · container/Dockerfile:2" in w.value for w in app.warning)
+    assert any(r"근거로 쓰지 않았습니다 · container/Dockerfile\:2" in w.value for w in app.warning)
     assert any("triage scan" in x.value and str(tmp_path) in x.value for x in app.code)
-    app.text_input[2].set_value("ghsa-demo-abcd-efgh").run()
+    hit = next(f for f in bundle.findings if f.vulnerability.aliases)
+    app.text_input[2].set_value(hit.vulnerability.aliases[0].lower()).run()
     assert not app.exception
     assert "검색 결과 1건" in app.subheader.values
-    assert any("CVE-2099-1002 · 판단 유보" in x.value for x in app.text)
+    assert any(f"{ui.md_escape(hit.vulnerability.id)} · 판단 유보" in x.value for x in app.markdown)
     assert any("(#action-1)" in x.value for x in app.markdown)
-    app.text_input[2].set_value("demo-reader").run()
+    app.text_input[2].set_value(hit.component.name).run()
     assert "검색 결과 5건" in app.subheader.values
     assert any("별도 할 일 없음" in x.value for x in app.caption)
     app.session_state["details_1"] = True
@@ -246,3 +252,110 @@ def test_action_cards_search_details_and_threaded_progress(monkeypatch, tmp_path
     assert not app.exception
     assert any("문제가 생기는 조건" in x.value for x in app.markdown)
     assert len(scan_threads) == 1
+
+
+@pytest.mark.parametrize("status", [None, "ok", "unavailable"])
+def test_action_card_fix_metadata(ui, monkeypatch, tmp_path, status):
+    bundle = TriageBundle.model_validate_json((SOURCE.parent / "action_bundle.json").read_text(encoding="utf-8"))
+    upgrade, image, confirm = build_actions(bundle)
+    top = next(f for f in bundle.findings if f.key == upgrade.top_finding)
+    source = next(e for e in bundle.evidence if e.id in top.component.evidence_ids)
+    old_step = "의존성 선언을 갱신합니다."
+    bundle.remediations.append(Remediation(finding_key=top.key, target_version=upgrade.target,
+                                           verified=True, steps=[old_step]))
+    manual = "수정할 선언 위치를 확인하세요."
+    unavailable = "재점검용 조회 결과가 없습니다."
+    after = source.snippet.replace(top.component.version, upgrade.target)
+    if status:
+        bundle.meta["fix_plan"] = [
+            dict(kind="change", findings=upgrade.findings[-1:], file=source.file, line=source.line_start,
+                 before=source.snippet, after=after),
+            dict(kind="manual", findings=confirm.findings, reason=manual),
+        ]
+        bundle.meta["fix_check"] = (dict(status=status, resolved=[top.key], remaining=confirm.findings, new=[])
+                                    if status == "ok" else dict(status=status, reason=unavailable))
+
+    def scan(label, root, output, **kwargs):
+        paths = {}
+        if status:
+            patch = output / f"fix-{label}.patch"
+            patch.write_bytes(after.encode("utf-8"))
+            paths["patch"] = patch
+        return SimpleNamespace(bundle=bundle, paths=paths, failures={})
+
+    install_backend(monkeypatch, scan)
+    app = AppTest.from_file(str(APP), default_timeout=60).run()
+    submit_server_path(app, tmp_path)
+    assert not app.exception
+    cards = [x for x in app.expander if "관련 취약점" in x.label]
+    for card, action, kind in zip(cards, (upgrade, image, confirm), ("업그레이드", "기본 이미지", "확인 필요"), strict=True):
+        assert kind in card.label and " → " in card.label
+        assert ui.md_escape(action.target or "영향 확인 후 결정") in card.label
+        assert any("triage scan" in code.value for code in card.code)
+    assert ui.md_escape(top.component.version) in cards[0].label
+    assert len(app.get("download_button")) == int(status is not None)
+    if status is None:
+        assert f"1. {ui.md_escape(old_step)}" in cards[0].markdown.values
+        assert not any(code.proto.language == "diff" for code in app.code)
+        assert not any("전체 변경안 재점검" in value for value in app.markdown.values)
+        return
+
+    assert app.session_state["finals_result"][1]["patch"][1] == after.encode("utf-8")
+    diffs = [code for code in cards[0].code if code.proto.language == "diff"]
+    assert [code.value for code in diffs] == [f"-{source.snippet}\n+{after}"]
+    assert f"{ui.md_escape(source.file)}:{source.line_start}" in cards[0].caption.values
+    assert not any(code.proto.language == "diff" for card in cards[1:] for code in card.code)
+    assert f"수동 확인 · {ui.md_escape(manual)}" in cards[2].markdown.values
+    assert not any(ui.md_escape(manual) in value for card in cards[:2] for value in card.markdown.values)
+    for card in cards:
+        if status == "ok":
+            assert (f"전체 변경안 재점검 · 해소 **1건** · 남음 **{len(confirm.findings)}건** · "
+                    "새로 생김 **0건**") in card.markdown.values
+        else:
+            assert ui.md_escape(unavailable) in card.caption.values
+
+
+def test_pending_findings_point_to_first_confirmation(ui, monkeypatch, tmp_path):
+    bundle = TriageBundle.model_validate_json((SOURCE.parent / "action_bundle.json").read_text(encoding="utf-8"))
+    bundle.findings = [f for f in bundle.findings if f.verdict.state == "undetermined"]
+    install_backend(monkeypatch, lambda *args, **kwargs: SimpleNamespace(bundle=bundle, paths={}, failures={}))
+    app = AppTest.from_file(str(APP), default_timeout=60).run()
+    submit_server_path(app, tmp_path)
+    assert not app.exception
+    assert app.metric[1].value == "0"
+    first = build_actions(bundle)[0]
+    assert any("먼저 확인할 것" in line and ui.md_escape(first.component) in line for line in app.markdown.values)
+
+
+def test_md_escape_preserves_each_special_character(ui):
+    punctuation = r"\`*_{}[]()#+-.!|><$~"
+    assert ui.md_escape("앞" + punctuation + "뒤") == "앞" + "".join("\\" + c for c in punctuation) + "뒤"
+
+
+def test_external_verdict_markdown_in_cards_search_and_details(monkeypatch, tmp_path):
+    bundle = TriageBundle.model_validate_json((SOURCE.parent / "action_bundle.json").read_text(encoding="utf-8"))
+    sentence = "판정 ${jackson.version}, __init__.py, [링크](http://x)"
+    escaped = r"판정 \$\{jackson\.version\}, \_\_init\_\_\.py, \[링크\]\(http\://x\)"
+    for finding in bundle.findings:
+        finding.verdict.plain_ko = sentence
+        finding.verdict.rationale_ko = f"근거 · {sentence}"
+    install_backend(monkeypatch, lambda *args, **kwargs: SimpleNamespace(bundle=bundle, paths={}, failures={}))
+    app = AppTest.from_file(str(APP), default_timeout=60).run()
+    submit_server_path(app, tmp_path)
+    assert not app.exception
+    card = next(card for card in app.expander if "관련 취약점" in card.label)
+    assert escaped in card.markdown.values
+    unaffected = next(card for card in app.expander if card.label.startswith("영향 없음"))
+    assert any(line.endswith(escaped) for line in unaffected.markdown.values)
+
+    top = build_actions(bundle)[0].top_finding
+    identifier = next(f.vulnerability.id for f in bundle.findings if f.key == top)
+    app.text_input[2].set_value(identifier).run()
+    assert f"근거 · {escaped}" in app.markdown.values
+    assert "[할 일 1로 이동](#action-1)" in app.markdown.values
+    app.session_state["details_1"] = True
+    app.run()
+    assert not app.exception
+    detail = next(card for card in app.expander if card.label.startswith("포함된 취약점"))
+    assert escaped in detail.markdown.values
+    assert f"근거 · {escaped}" in detail.markdown.values
