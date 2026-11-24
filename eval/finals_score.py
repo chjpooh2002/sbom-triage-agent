@@ -367,7 +367,7 @@ def main() -> None:
     parser.add_argument("--sbom", type=Path, help="기본값은 <out>/sbom-<라벨>.json")
     parser.add_argument("--run2", type=Path, help="반복 비교용 두 번째 SBOM 경로")
     parser.add_argument("--fetch-missing", action="store_true",
-                        help="SBOM에 누락된 core 행의 캐시 없는 OSV 상세 권고 조회 (네트워크 필요)")
+                        help="SBOM에 누락된 core 행의 OSV 패키지 범위 보충 (네트워크 필요)")
     args = parser.parse_args()
     try:
         label = checked_label(args.label)
@@ -381,13 +381,13 @@ def main() -> None:
         cache = OsvCache(args.osv_cache)
         fetched = None
         if args.fetch_missing:
-            identifiers = (
-                (case.vuln_id, *sorted(case.aliases))
+            missing = (
+                (case.component, (case.vuln_id, *sorted(case.aliases)))
                 for group, entries in _matched_groups(cases, first) if not entries
                 for case in group if case.scoring_set == "core"
             )
             with httpx.Client(timeout=10) as client:
-                fetched = cache.fetch_missing(identifiers, client)
+                fetched = cache.fetch_missing(missing, client)
         report = render(label, score(cases, first, cache), repeat, fetched)
         args.out.mkdir(parents=True, exist_ok=True)
         (args.out / f"score-{label}.md").write_text(report, encoding="utf-8")
