@@ -1,0 +1,35 @@
+# Docker Official Image와 배포판의 공개 제품 식별자. 이름이 같은 임의 네임스페이스 이미지는 제외한다.
+products:
+  node:
+    names: [node, nodejs, node.js]
+    cpes: ['cpe:2.3:a:nodejs:node.js']
+  nginx:
+    names: [nginx]
+    cpes: ['cpe:2.3:a:nginx:nginx', 'cpe:2.3:a:f5:nginx']
+  tomcat:
+    names: [tomcat, apache-tomcat]
+    cpes: ['cpe:2.3:a:apache:tomcat']
+  httpd:
+    names: [httpd, apache-httpd]
+    cpes: ['cpe:2.3:a:apache:http_server']
+  python:
+    names: [python, cpython]
+    cpes: ['cpe:2.3:a:python:python']
+  openjdk:
+    names: [openjdk]
+    cpes: ['cpe:2.3:a:oracle:openjdk']
+  temurin:
+    names: [eclipse-temurin, temurin]
+    cpes: ['cpe:2.3:a:eclipse:temurin']
+  corretto:
+    names: [amazoncorretto, amazon-corretto, corretto]
+    cpes: ['cpe:2.3:a:amazon:corretto']
+  alpine:
+    names: [alpine, alpine-linux]
+    cpes: ['cpe:2.3:o:alpinelinux:alpine_linux']
+  debian:
+    names: [debian]
+    cpes: ['cpe:2.3:o:debian:debian_linux']
+  ubuntu:
+    names: [ubuntu]
+    cpes: ['cpe:2.3:o:canonical:ubuntu_linux']
