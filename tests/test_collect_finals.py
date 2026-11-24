@@ -40,17 +40,18 @@ def test_npm_nested_scope_graph_and_drift():
     for c, line in ((top, 13), (nested, 16)):
         assert any(refs[r].line_start == line and refs[r].kind == "lockfile" for r in c.evidence_ids)
     assert next(c for c in result.components if c.name == "ink-probe").scope == "dev"
-    assert len(result.anomalies) == 2
-    for anomaly in result.anomalies:
-        assert anomaly.kind == "lock_mismatch"
-        assert {refs[r].kind for r in anomaly.evidence_ids} == {"manifest", "lockfile"}
+    anomaly, = result.anomalies
+    assert anomaly.kind == "lock_mismatch" and "총 2건" in anomaly.message
+    assert {refs[r].kind for r in anomaly.evidence_ids} == {"manifest", "lockfile"}
 
 
 def test_npm_missing_lock(tmp_path):
     copyfile(FIX / "npm/package.json", tmp_path / "package.json")
     result = collect(tmp_path)
     verify(result, tmp_path)
-    assert len(result.components) == len(result.anomalies) == 3
+    assert len(result.components) == 3
+    anomaly, = result.anomalies
+    assert anomaly.kind == "missing_lockfile" and "총 3건" in anomaly.message
     assert all(not c.version and c.version_source == "manifest_range" for c in result.components)
 
 
@@ -97,10 +98,11 @@ def central(tmp_path, monkeypatch):
         urls.append(url)
         name, version = url.split("/")[-3:-1]
         assert url == f"{maven.CENTRAL}/org/fixture/{name}/{version}/{name}-{version}.pom"
-        if name in {"bearing", "sleeve", "released", "flat"}:
+        if name in {"bearing", "sleeve", "released", "flat", "lathe"}:
             text = (FIX / "central/leaf.pom").read_text(encoding="utf-8")
             return text.replace("ARTIFACT", name).replace("VERSION", version)
-        return (FIX / "central" / (name + ".pom")).read_text(encoding="utf-8")
+        fixture = "metal-bom-2.1" if (name, version) == ("metal-bom", "2.1") else name
+        return (FIX / "central" / (fixture + ".pom")).read_text(encoding="utf-8")
 
     monkeypatch.setattr(maven, "CACHE", tmp_path)
     monkeypatch.setattr(maven, "download", download)
@@ -144,11 +146,14 @@ def test_maven_managed_transitives_and_nearest_winner(central, monkeypatch):
     assert not result.anomalies
     for module, bearing_version in (("gearbox", "2.4.0"), ("adjusted", "2.9.0")):
         deps = {c.name: c for c in result.components if c.module == module}
-        assert {c.name for c in deps.values() if c.direct} == {"rotor", "shaft"}
-        assert all(c.direct is False for c in deps.values() if c.name not in {"rotor", "shaft"})
+        direct_names = {"rotor", "shaft", "lathe"} if module == "adjusted" else {"rotor", "shaft"}
+        assert {c.name for c in deps.values() if c.direct} == direct_names
+        assert all(c.direct is False for c in deps.values() if c.name not in direct_names)
         sleeve = deps["sleeve"]
-        assert (sleeve.version, sleeve.declared_spec, sleeve.version_source) == ("1.7.1", "0.1", "managed")
-        assert any(refs[r].url.endswith("/metal-bom-2.0.pom") for r in sleeve.evidence_ids)
+        expected = ("1.8.0", "property_override", "2.1") if module == "adjusted" else ("1.7.1", "managed", "2.0")
+        version, source, bom_version = expected
+        assert (sleeve.version, sleeve.version_source, sleeve.declared_spec) == (version, source, "0.1")
+        assert any(refs[r].url.endswith(f"/metal-bom-{bom_version}.pom") for r in sleeve.evidence_ids)
         assert any(refs[r].url.endswith("/rotor-1.0.pom") for r in sleeve.evidence_ids)
         bearing = deps["bearing"]
         assert bearing.version == bearing_version
@@ -156,6 +161,9 @@ def test_maven_managed_transitives_and_nearest_winner(central, monkeypatch):
         if module == "adjusted":
             assert bearing.version_source == "property_override"
             assert any(refs[r].file == "adjusted/pom.xml" and "2.9.0" in refs[r].snippet for r in bearing.evidence_ids)
+            assert any(refs[r].file == "adjusted/pom.xml" and "<bom.version>2.1" in refs[r].snippet
+                       for r in sleeve.evidence_ids)
+            assert (deps["lathe"].version, deps["lathe"].version_source) == ("3.2.0", "property_override")
         assert deps["flat"].version == "4.0"
         assert deps["flat"].id in deps["shaft"].depends_on and deps["flat"].id in deps["bridge"].depends_on
         assert deps["released"].id in deps["bridge"].depends_on
@@ -191,7 +199,7 @@ def test_maven_limits_preserve_direct_inventory(central, monkeypatch, limits):
     root = FIX / "maven-graph"
     result = collect(root)
     verify(result, root)
-    assert {c.name for c in result.components} == {"rotor", "shaft"}
+    assert {c.name for c in result.components} == {"rotor", "shaft", "lathe"}
     assert len(central) <= limits.max_poms
     assert any(a.kind == "maven_limit" for a in result.anomalies)
 
@@ -211,6 +219,24 @@ def test_maven_unavailable_descriptor_records_url_and_preserves_siblings(central
     failure = next(a for a in result.anomalies if a.kind == "unresolved_pom")
     assert any(refs[r].url.endswith("rotor-1.0.pom") for r in failure.evidence_ids)
     assert any(c.name == "flat" and c.direct is False for c in result.components)
+
+
+def test_repeated_pom_failures_keep_three_examples_and_all_url_evidence(tmp_path, monkeypatch):
+    def unavailable(_url):
+        raise OSError("offline")
+
+    monkeypatch.setattr(maven, "CACHE", tmp_path)
+    monkeypatch.setattr(maven, "download", unavailable)
+    root = FIX / "maven-graph"
+    result = collect(root)
+    refs = verify(result, root)
+    failures = [a for a in result.anomalies if a.kind == "unresolved_pom"]
+    failure, = failures
+    assert "총 5건" in failure.message
+    assert failure.message.count("org.fixture:") == 3
+    urls = [refs[r].url for r in failure.evidence_ids if refs[r].url]
+    assert len(urls) == 5
+    assert any(url.endswith("/metal-bom-2.1.pom") for url in urls)
 
 
 def test_docker_stages_and_floating_release_lines():
@@ -235,7 +261,7 @@ def test_bundles_and_jar_metadata(tmp_path):
     result = collect(tmp_path)
     verify(result, tmp_path)
     assert {(c.name, c.version) for c in result.components} == {("pressed-wheel", "2.3.1"), ("rotary-dial", "2.3.4")}
-    assert sorted(a.kind for a in result.anomalies) == ["undeclared_bundle", "undeclared_bundle", "unidentified_bundle"]
+    assert sorted(a.kind for a in result.anomalies) == ["undeclared_bundle", "unidentified_bundle"]
 
 
 def test_syft_only_without_matching_adapter(monkeypatch):
