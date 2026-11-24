@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import csv
 import importlib.util
 import json
 import math
@@ -48,6 +49,11 @@ STAGES = (
     Stage("reference", "참고 상한 모델", verify="on", escalate="on", reference=True),
 )
 
+COLUMNS = (
+    "단계", "core 정확 일치 (엄격)", "core 정확 일치 (버전 제외 인정)", "영향 있음 재현율",
+    "오탐 수", "판단 유보 수", "모델 호출 수", "총 토큰", "총 시간(초)",
+)
+
 
 _SCAN_STAGE = """\
 import os
@@ -75,6 +81,7 @@ class Usage:
     tokens: int | str = "측정 불가"
     seconds: float | str = "측정 불가"
     reason: str = ""
+    llm_calls: int | str = "측정 불가"
 
 
 def load_usage(path: Path, *, allow_missing: bool) -> Usage:
@@ -83,10 +90,20 @@ def load_usage(path: Path, *, allow_missing: bool) -> Usage:
             return Usage(reason="실행 로그 없음")
         raise FileNotFoundError(f"{path}: 실행 로그가 없습니다")
     last = ""
+    llm_calls: int | str = "측정 불가"
     with path.open(encoding="utf-8-sig") as source:
         for line in source:
-            if line.strip():
-                last = line
+            if not line.strip():
+                continue
+            last = line
+            try:
+                record = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(record, dict) and (record.get("stage"), record.get("event")) == ("judge", "end"):
+                data = record.get("data")
+                count = data.get("llm_calls") if isinstance(data, dict) else None
+                llm_calls = count if type(count) is int and count >= 0 else "측정 불가"
     if not last:
         raise ValueError(f"{path}: 실행 로그가 비어 있습니다")
     try:
@@ -106,21 +123,23 @@ def load_usage(path: Path, *, allow_missing: bool) -> Usage:
         raise ValueError(f"{path}: run.end의 total_tokens 또는 측정 불가 사유를 확인하세요")
     if not (type(seconds) in (int, float) and math.isfinite(seconds) and seconds >= 0):
         raise ValueError(f"{path}: run.end의 total_seconds를 확인하세요")
-    return Usage(tokens, seconds, reason)
+    return Usage(tokens, seconds, reason, llm_calls)
+
+
+def _table_rows(results: list[tuple[Stage, finals_score.Score, Usage]]):
+    for stage, score, usage in results:
+        yield (stage.title, score.accuracy, score.accuracy_with_exclusions, score.recall,
+               len(score.false_positives), score.undetermined, usage.llm_calls, usage.tokens, usage.seconds)
 
 
 def render(label: str, results: list[tuple[Stage, finals_score.Score, Usage]]) -> str:
     lines = [
         f"# 단계별 판정 비교 ({label})", "",
-        "| 단계 | core 정확도 | 영향 있음 재현율 | 오탐 | 총 토큰 | 총 시간(초) |",
-        "| --- | ---: | ---: | ---: | ---: | ---: |",
+        "| " + " | ".join(COLUMNS) + " |",
+        "| --- |" + " ---: |" * (len(COLUMNS) - 1),
     ]
-    notes = []
-    for stage, score, usage in results:
-        lines.append(f"| {stage.title} | {score.accuracy} | {score.recall} | {len(score.false_positives)} | "
-                     f"{usage.tokens} | {usage.seconds} |")
-        if usage.reason:
-            notes.append(f"- {stage.title} — {usage.reason}")
+    lines.extend("| " + " | ".join(map(str, row)) + " |" for row in _table_rows(results))
+    notes = [f"- {stage.title} — {usage.reason}" for stage, _, usage in results if usage.reason]
     if notes:
         lines.extend(["", "## 측정 불가 사유", "", *notes])
     return "\n".join(lines) + "\n"
@@ -131,7 +150,7 @@ def run_live(label: str, root: Path, out: Path, stages: list[Stage], offline: bo
         raise ValueError("triage.finals.default_judge가 필요합니다. 저장된 산출물은 --saved로 비교하세요")
     if not root.is_dir():
         raise ValueError(f"{root}: 소스 디렉터리가 필요합니다")
-    base_env = os.environ.copy()
+    base_env = dict(os.environ, SBOMTRIAGE_LLM_CACHE="off")
     if any(stage.judge == "on" for stage in stages):
         subprocess.run([sys.executable, "-c", _SCAN_STAGE, "--check"],
                        env=dict(base_env, SBOMTRIAGE_JUDGE="on"), check=True, stdout=sys.stderr)
@@ -149,7 +168,7 @@ def run_live(label: str, root: Path, out: Path, stages: list[Stage], offline: bo
 
 def compare(
     directory: Path, label: str, gold: list[finals_score.GoldCase], service: str | None,
-    stages: list[Stage], *, allow_missing_logs: bool,
+    stages: list[Stage], *, allow_missing_logs: bool, osv_cache: finals_score.OsvCache | None = None,
 ) -> list[tuple[Stage, finals_score.Score, Usage]]:
     results = []
     for stage in stages:
@@ -157,7 +176,7 @@ def compare(
         cases, entries = finals_score.load_run(stage_dir / f"sbom-{label}.json", gold, label, service)
         service = cases[0].service
         usage = load_usage(stage_dir / f"log-{label}-run1.jsonl", allow_missing=allow_missing_logs)
-        results.append((stage, finals_score.score(cases, entries), usage))
+        results.append((stage, finals_score.score(cases, entries, osv_cache), usage))
     return results
 
 
@@ -177,10 +196,15 @@ def main() -> None:
         gold = finals_score.load_gold(args.gold, args.component_alias)
         stages = [stage for stage in STAGES if not args.stage or stage.key in args.stage]
         directory = args.saved or run_live(label, args.root, args.out, stages, args.offline)
-        results = compare(directory, label, gold, args.service, stages, allow_missing_logs=args.saved is not None)
+        results = compare(directory, label, gold, args.service, stages, allow_missing_logs=args.saved is not None,
+                          osv_cache=finals_score.OsvCache(args.osv_cache))
         report = render(label, results)
         args.out.mkdir(parents=True, exist_ok=True)
         (args.out / "ablation.md").write_text(report, encoding="utf-8")
+        with (args.out / "ablation.csv").open("w", encoding="utf-8", newline="") as output:
+            writer = csv.writer(output)
+            writer.writerow(COLUMNS)
+            writer.writerows(_table_rows(results))
     except subprocess.CalledProcessError as exc:
         parser.error(f"단계별 스캔 하위 프로세스가 실패했습니다 (종료 코드 {exc.returncode})")
     except (OSError, ValueError) as exc:
