@@ -420,3 +420,15 @@ def test_pdf_uses_same_actions_in_summary_plan_and_verification(tmp_path):
                 assert f"목표 버전 후보 {action.target} (확인 필요)" in card
             assert all(ref in card for ref in action.evidence_ids)
     assert "활성 옵션 · 확인 위치 배포 설정" in verification
+
+
+def test_pdf_marks_assumption_conditions_as_premise(bundle, tmp_path, monkeypatch):
+    import triage.output.report_pdf as report
+    from triage.models import ItemResult
+
+    pages = []
+    monkeypatch.setattr(report, "render_with_engine", lambda page: (pages.append(page), b"%PDF-1.4", "fake", {})[1:])
+    bundle.findings[0].verdict.item_results.append(
+        ItemResult(item_key="attacker_network_position", status="assumed", reason="운영 환경 전제"))
+    render_pdf(bundle, {}, tmp_path / "report.pdf")
+    assert "attacker_network_position · 전제" in pages[0]

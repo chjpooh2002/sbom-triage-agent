@@ -11,11 +11,12 @@ from pathlib import Path
 from triage.evidence import EvidenceStore, find_callers, read_lines, resolve_config, search_symbol
 from triage.models import Anomaly, Checklist, Evidence, Finding, SourceFileScope
 
-from .checklist import import_names
+from .checklist import FIXED_KINDS, import_names
 from .comments import comment_text, starts_for
 from .settings import Settings
 
 _CALLABLE = re.compile(r"^[A-Za-z_$][\w$]*(\.[A-Za-z_$][\w$]*)*$")
+_TOOLS = {"search_symbol", "find_callers", "read_lines", "resolve_config"}
 _RANGE_NOTE = {True: "범위 안", False: "범위 밖", None: "계산 불가"}
 
 
@@ -35,6 +36,7 @@ class Workspace:
         self.shown: dict[tuple, str] = {}
         self.anomalies: dict[tuple, Anomaly] = {}
         self.tool_count = 0
+        self.model_tools: dict[str, int] = {}   # 모델이 직접 요청한 도구별 횟수(유보 전 추적 여부 판단용)
         self.checklist: Checklist | None = None
 
     # ── 근거 표시 ──
@@ -191,6 +193,8 @@ class Workspace:
         """모델이 요청한 도구 하나를 실행한다."""
         tool = request.get("tool", "")
         self.tool_count += 1
+        if tool in _TOOLS:
+            self.model_tools[tool] = self.model_tools.get(tool, 0) + 1
         try:
             if tool == "search_symbol" and request.get("symbol", "").strip():
                 return self.search(request["symbol"].strip(), by="model")
@@ -238,6 +242,8 @@ class Workspace:
         budget = self.settings.max_prompt_evidence_chars
         used = sum(len(s) for s in sections)
         for item in checklist.items:
+            if item.kind in FIXED_KINDS:
+                continue   # 라이브러리 사실·전제는 저장소에서 확인하지 않는다(규칙이 결과를 정함)
             parts = []
             for sym in item.symbols[:self.settings.max_symbols_per_item]:
                 parts.append(self.search(sym))
