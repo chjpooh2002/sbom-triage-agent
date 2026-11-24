@@ -91,15 +91,16 @@ uv run python -m eval.ablation T --saved saved/stages
 구성요소 그룹과 대소문자를 무시한다. 정답지의 표시명과 SBOM 이름이 다른 경우 `--component-alias "정답지 표시명=SBOM name"`을 지정할 수 있다.
 취약점 ID와 별칭은 정답지 `aliases`, CycloneDX `references[].id`, `triage:alias`·`triage:aliases` 속성에서 읽는다.
 
-- `core` 정확도와 재현율은 누락 후보도 분모에 포함한다. 정밀도와 오탐은 `core` 정답 기준이며, 추가 후보는 `core`와 `aux` 모두에서 짝을 찾지 못한 후보를 센다.
-- 한 이름에 여러 정답 행이 있으면 행마다 채점한다. 한 키의 SBOM 판정이 서로 다르면 정확 일치와 재현율에서 실패로 처리하고, 영향 있음 판정이 섞인 음성 `core` 사례는 오탐으로 센다.
+- `core` 정확도와 재현율은 누락 후보도 분모에 포함한다. 정밀도는 `탐지 / (탐지 + core 오탐 + 정답지 밖 영향 있음)`이다. 추가 후보는 판정과 함께 표시하며 정답지 밖 영향 있음 판정을 별도 목록에도 표시한다.
+- 서비스·취약점·구성요소 이름이 같은 정답이 여러 행이면 정답 `version`의 첫 토큰과 SBOM 설치 버전을 맞춘다. 정답이 한 행이면 버전은 비교 대상에서 제외한다. 정답과 짝이 없는 후보는 설치 버전별로 센다. 매칭된 같은 키의 SBOM 판정이 충돌하면 정확 일치와 재현율에서 실패로 처리하고, 영향 있음 판정이 섞인 음성 `core` 사례는 오탐으로 센다.
 - `aux` 두 비율은 전체 `aux` 행을 분모로 쓴다. `missing_info`는 `triage:missing_info` 속성 또는 명시적 `analysis.missing_info`에서 읽는다. CycloneDX 스키마를 준수하는 출력은 속성에 기록하고 구조화 항목은 `what`과 `where`를 채운다.
 - 반복 일치율의 분모는 두 실행에 등장한 후보의 합집합이다. 양쪽에 일관된 정의 상태가 있고 값이 같을 때 일치로 센다.
 
 저장 모드는 `--saved` 아래의 `rules`, `model`, `verify`, `escalate`, `reference` 폴더에서 각각 `sbom-<라벨>.json`과 `log-<라벨>-run1.jsonl`을 읽는다.
 `--stage`를 반복해 일부 단계만 고를 수 있다. 총 토큰과 초 단위 총 시간은 JSONL 마지막 `run.end`에서 읽으며, 저장 모드에서 로그가 없으면 `측정 불가`로 표시한다.
 
-실행 모드 연동 지점은 `triage.finals.run_scan(label, root, out_dir, offline=...)`이다. 통합 runner가 아래 환경변수를 적용하면 `uv run --env-file .env python -m eval.ablation T --root ./project`로 실행한다.
+실행 모드는 각 단계에서 `triage.finals.run_scan(label, root, out_dir, offline=..., judge=default_judge())`를 호출한다. `uv run --env-file .env python -m eval.ablation T --root ./project`로 실행한다.
+`triage.finals.default_judge`가 없거나 `SBOMTRIAGE_JUDGE=on` 단계의 판정기를 가져올 수 없으면 오류를 표시한다.
 `--offline`은 그대로 전달된다. 각 단계가 같은 소스를 별도 프로세스에서 스캔하고 `out/ablation-runs/` 아래에 독립 실행 산출물을 남긴다.
 
 | 단계 | `SBOMTRIAGE_JUDGE` | `SBOMTRIAGE_VERIFY` | `SBOMTRIAGE_ESCALATE` | 모델 환경변수 |

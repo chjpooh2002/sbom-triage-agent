@@ -49,6 +49,27 @@ STAGES = (
 )
 
 
+_SCAN_STAGE = """\
+import os
+import sys
+from pathlib import Path
+
+try:
+    from triage.finals import default_judge
+except ImportError as exc:
+    if exc.name != 'triage.finals':
+        raise
+    raise SystemExit('triage.finals.default_judge가 필요합니다') from None
+from triage.finals import run_scan
+
+judge = default_judge()
+if judge is None and os.environ['SBOMTRIAGE_JUDGE'] == 'on':
+    raise SystemExit('SBOMTRIAGE_JUDGE=on 단계에 판정기가 필요합니다')
+if sys.argv[1] != '--check':
+    run_scan(sys.argv[1], Path(sys.argv[2]), Path(sys.argv[3]), offline=sys.argv[4] == '1', judge=judge)
+"""
+
+
 @dataclass(frozen=True)
 class Usage:
     tokens: int | str = "측정 불가"
@@ -107,21 +128,21 @@ def render(label: str, results: list[tuple[Stage, finals_score.Score, Usage]]) -
 
 def run_live(label: str, root: Path, out: Path, stages: list[Stage], offline: bool) -> Path:
     if importlib.util.find_spec("triage.finals") is None:
-        raise ValueError("triage.finals.run_scan을 사용할 수 없습니다. 저장된 산출물은 --saved로 비교하세요")
+        raise ValueError("triage.finals.default_judge가 필요합니다. 저장된 산출물은 --saved로 비교하세요")
     if not root.is_dir():
         raise ValueError(f"{root}: 소스 디렉터리가 필요합니다")
-    environments = [(stage, stage.environment(os.environ.copy())) for stage in stages]
+    base_env = os.environ.copy()
+    if any(stage.judge == "on" for stage in stages):
+        subprocess.run([sys.executable, "-c", _SCAN_STAGE, "--check"],
+                       env=dict(base_env, SBOMTRIAGE_JUDGE="on"), check=True, stdout=sys.stderr)
+    environments = [(stage, stage.environment(base_env)) for stage in stages]
     parent = out / "ablation-runs"
     parent.mkdir(parents=True, exist_ok=True)
     run_dir = Path(tempfile.mkdtemp(prefix=f"{label}-", dir=parent))
-    entrypoint = (
-        "from pathlib import Path; import sys; from triage.finals import run_scan; "
-        "run_scan(sys.argv[1], Path(sys.argv[2]), Path(sys.argv[3]), offline=sys.argv[4] == '1')"
-    )
     for stage, env in environments:
         directory = run_dir / stage.key
         directory.mkdir()
-        subprocess.run([sys.executable, "-c", entrypoint, label, str(root), str(directory),
+        subprocess.run([sys.executable, "-c", _SCAN_STAGE, label, str(root), str(directory),
                         str(int(offline))], env=env, check=True, stdout=sys.stderr)
     return run_dir
 
@@ -160,7 +181,9 @@ def main() -> None:
         report = render(label, results)
         args.out.mkdir(parents=True, exist_ok=True)
         (args.out / "ablation.md").write_text(report, encoding="utf-8")
-    except (OSError, ValueError, subprocess.CalledProcessError) as exc:
+    except subprocess.CalledProcessError as exc:
+        parser.error(f"단계별 스캔 하위 프로세스가 실패했습니다 (종료 코드 {exc.returncode})")
+    except (OSError, ValueError) as exc:
         parser.error(str(exc))
     print(report, end="")
 

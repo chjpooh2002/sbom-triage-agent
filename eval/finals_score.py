@@ -23,6 +23,7 @@ class Candidate:
     component: str
     state: str
     missing_info: bool = False
+    version: str = ""
 
     @property
     def names(self) -> set[str]:
@@ -31,22 +32,18 @@ class Candidate:
 
     @property
     def description(self) -> str:
-        return f"{self.service} / {self.vuln_id} / {self.component}"
+        version = f" @ {self.version}" if self.version else ""
+        return f"{self.service} / {self.vuln_id} / {self.component}{version}"
 
 
 @dataclass(frozen=True)
 class GoldCase(Candidate):
     scoring_set: str = ""
-    version: str = ""
     component_aliases: tuple[str, ...] = ()
 
     @property
     def names(self) -> set[str]:
         return super().names.union(self.component_aliases)
-
-    @property
-    def description(self) -> str:
-        return super().description + (f" @ {self.version}" if self.version else "")
 
 
 @dataclass(frozen=True)
@@ -59,6 +56,16 @@ class Ratio:
 
 
 @dataclass(frozen=True)
+class ExtraCandidate:
+    candidate: Candidate
+    states: frozenset[str]
+
+    @property
+    def description(self) -> str:
+        return f"{self.candidate.description} ({', '.join(sorted(self.states))})"
+
+
+@dataclass(frozen=True)
 class Score:
     accuracy: Ratio
     recall: Ratio
@@ -66,7 +73,7 @@ class Score:
     missed_affected: tuple[GoldCase, ...]
     false_positives: tuple[GoldCase, ...]
     missing_core: tuple[GoldCase, ...]
-    extras: tuple[Candidate, ...]
+    extras: tuple[ExtraCandidate, ...]
     aux_undetermined: Ratio
     aux_missing_info: Ratio
 
@@ -127,7 +134,7 @@ def _has_missing_info(value: object) -> bool:
 def _predictions(path: Path, document: dict, service: str) -> list[Candidate]:
     project = document.get("metadata", {}).get("component")
     roots = [project, *document.get("components", [])] if project else document.get("components", [])
-    names = {item["bom-ref"]: item["name"] for item in _components(roots) if item.get("bom-ref")}
+    components = {item["bom-ref"]: item for item in _components(roots) if item.get("bom-ref")}
     predictions = []
     for vuln in document.get("vulnerabilities", []):
         if not (vuln_id := vuln.get("id", "").strip()):
@@ -147,10 +154,12 @@ def _predictions(path: Path, document: dict, service: str) -> list[Candidate]:
             raise ValueError(f"{path}: {vuln_id}의 affects 구성요소 누락")
         for target in targets:
             ref = target.get("ref")
-            if ref not in names:
+            if ref not in components:
                 raise ValueError(f"{path}: {vuln_id}의 구성요소 참조를 찾을 수 없습니다 ({ref})")
+            component = components[ref]
             predictions.append(Candidate(service, vuln_id, frozenset(aliases - {""}),
-                                         names[ref], state, missing_info))
+                                         component["name"], state, missing_info,
+                                         version=component.get("version", "").strip()))
     return predictions
 
 
@@ -196,6 +205,22 @@ def _groups(*runs: Iterable[Candidate]) -> Iterable[list[list[Candidate]]]:
     return groups.values()
 
 
+def _matched_groups(gold: Iterable[GoldCase], *runs: Iterable[Candidate]) -> Iterable[list[list[Candidate]]]:
+    for group in _groups(gold, *runs):
+        if len(group[0]) == 1:
+            yield group
+            continue
+
+        by_version: dict[str, list[list[Candidate]]] = {}
+        for index, entries in enumerate(group):
+            for entry in entries:
+                version = entry.version
+                if index == 0 and version:
+                    version = version.split(maxsplit=1)[0]
+                by_version.setdefault(version, [[] for _ in group])[index].append(entry)
+        yield from by_version.values()
+
+
 def _state(entries: list[Candidate]) -> str:
     states = {entry.state for entry in entries}
     if len(states) > 1:
@@ -206,9 +231,10 @@ def _state(entries: list[Candidate]) -> str:
 def score(gold: list[GoldCase], predictions: list[Candidate]) -> Score:
     exact = affected = detected = aux = aux_undetermined = aux_missing_info = core = 0
     misses, false_positives, missing_core, extras = [], [], [], []
-    for cases, entries in _groups(gold, predictions):
+    for cases, entries in _matched_groups(gold, predictions):
         if not cases:
-            extras.append(entries[0])
+            extras.append(ExtraCandidate(entries[0], frozenset(entry.state for entry in entries)))
+            continue
         state = _state(entries)
         for case in cases:
             if case.scoring_set == "aux":
@@ -228,8 +254,10 @@ def score(gold: list[GoldCase], predictions: list[Candidate]) -> Score:
                     misses.append(case)
             elif any(entry.state == "affected" for entry in entries):
                 false_positives.append(case)
+    extra_affected = sum("affected" in entry.states for entry in extras)
     return Score(
-        Ratio(exact, core), Ratio(detected, affected), Ratio(detected, detected + len(false_positives)),
+        Ratio(exact, core), Ratio(detected, affected),
+        Ratio(detected, detected + len(false_positives) + extra_affected),
         tuple(misses), tuple(false_positives), tuple(missing_core), tuple(extras),
         Ratio(aux_undetermined, aux), Ratio(aux_missing_info, aux),
     )
@@ -237,7 +265,7 @@ def score(gold: list[GoldCase], predictions: list[Candidate]) -> Score:
 
 def agreement(first: list[Candidate], second: list[Candidate], gold: Iterable[GoldCase] = ()) -> Ratio:
     hits = total = 0
-    for _, left, right in _groups(gold, first, second):
+    for _, left, right in _matched_groups(gold, first, second):
         if left or right:
             total += 1
             left_state = _state(left)
@@ -262,6 +290,7 @@ def render(label: str, result: Score, repeat: Ratio | None = None) -> str:
     for title, entries in (
         ("놓친 영향 있음", result.missed_affected), ("오탐", result.false_positives),
         ("누락 후보 (core)", result.missing_core), ("추가 후보", result.extras),
+        ("정답지 밖 영향 있음 검토", tuple(entry for entry in result.extras if "affected" in entry.states)),
     ):
         lines.extend(["", f"## {title} ({len(entries)})", ""])
         lines.extend(f"- {entry.description}" for entry in sorted(entries, key=lambda entry: entry.description))
