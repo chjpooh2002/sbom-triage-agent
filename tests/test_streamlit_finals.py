@@ -369,7 +369,18 @@ def test_action_card_fix_metadata(ui, monkeypatch, tmp_path, status):
         assert ui.md_escape(action.target or "영향 확인 후 결정") in card.label
         assert any("triage scan" in code.value for code in card.code)
     assert ui.md_escape(top.component.version) in cards[0].label
-    assert len(app.get("download_button")) == (2 if status else 0)
+    buttons = {button.key: button for button in app.get("download_button")}
+    assert len(buttons) == (3 if status else 1)
+    # 확인 필요 항목의 업무 요청서는 받는 팀별로 한 파일에 묶어 내려받는다.
+    text = ui.work_requests_text("svc", [upgrade, image, confirm])
+    for action in (upgrade, image, confirm):
+        if action.work_request:
+            assert f"## {action.team or '담당 팀 미정'}" in text and action.work_request.title in text
+    steps = next(value for value in app.markdown.values if value.startswith("1. "))
+    assert "다시 점검" in steps
+    assert ("git apply" in steps) == bool(status)
+    assert any(code.value.startswith("uv run triage scan") and code.value.endswith("out/recheck")
+               for code in app.code)
     if status is None:
         assert f"1. {ui.md_escape(old_step)}" in cards[0].markdown.values
         assert not any(code.proto.language == "diff" for code in app.code)
@@ -383,10 +394,12 @@ def test_action_card_fix_metadata(ui, monkeypatch, tmp_path, status):
     assert not any(code.proto.language == "diff" for card in cards[1:] for code in card.code)
     assert f"수동 확인 · {ui.md_escape(manual)}" in cards[2].markdown.values
     assert not any(ui.md_escape(manual) in value for card in cards[:2] for value in card.markdown.values)
+    if status == "ok":
+        assert (f"변경안 적용 시 이 항목 {len(upgrade.findings)}건 중 해소 **1건** · "
+                f"남음 **{len(upgrade.findings) - 1}건**") in cards[0].markdown.values
     for card in cards:
         if status == "ok":
-            assert (f"전체 변경안 재점검 · 해소 **1건** · 남음 **{len(confirm.findings)}건** · "
-                    "새로 생김 **0건**") in card.markdown.values
+            assert any(value.startswith("변경안 적용 시 이 항목 ") for value in card.markdown.values)
         else:
             assert ui.md_escape(unavailable) in card.caption.values
 
