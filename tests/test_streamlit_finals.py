@@ -138,16 +138,16 @@ def test_finals_calls_pipeline_and_keeps_downloads(monkeypatch, tmp_path):
     assert any("판정 6건" in item.value for item in app.text)
     assert any("PDF 보고서 생성 — 완료" in item.value for item in app.text)
     buttons = app.get("download_button")
+    # PDF는 '지금 할 일'의 결과 공유 단계에서, 나머지는 기록용 파일에서 한 번씩만 내려받는다.
     assert [button.label for button in buttons] == [
-        "PDF 보고서 내려받기", "구성요소 목록 (SBOM JSON) 내려받기",
-        "PDF 보고서", "구성요소 목록 (SBOM JSON)", "실행 기록 (JSONL)",
+        "PDF 보고서 내려받기", "구성요소 목록 (SBOM JSON)", "실행 기록 (JSONL)",
     ]
     assert buttons[0].proto.type == "primary"
     conclusion = next(line for line in app.markdown if "먼저 확인할 것" in line.value)
     assert elements.index(conclusion) < elements.index(buttons[0]) < elements.index(app.text_input[2])
     app.run()
     assert len(calls) == 1
-    assert len(app.get("download_button")) == 5
+    assert len(app.get("download_button")) == 3
 
 
 def test_missing_backend_shows_error(monkeypatch):
@@ -267,7 +267,7 @@ def test_real_offline_scan_fills_expected_downloads(monkeypatch):
     submit_server_path(app, SOURCE, offline=True)
     assert not app.exception
     assert not app.error
-    assert len(app.get("download_button")) == 7
+    assert len(app.get("download_button")) == 4  # 변경안·PDF(지금 할 일) + SBOM·실행 기록(기록용 파일)
     _, downloads, failures = app.session_state["finals_result"]
     assert not failures
     assert downloads["patch"][0].endswith(".patch")
@@ -311,7 +311,8 @@ def test_action_cards_search_details_and_threaded_progress(ui, monkeypatch, tmp_
     ]
     assert any("먼저 고칠 것" in value for value in app.markdown.values)
     cards = [x for x in app.expander if "관련 취약점" in x.label]
-    assert len(cards) == 3 and all(x.proto.expanded for x in cards)
+    # 한눈에 보이도록 1순위 카드만 펼치고 나머지는 조치 보드에서 고른다.
+    assert len(cards) == 3 and [x.proto.expanded for x in cards] == [True, False, False]
     assert any(r"근거로 쓰지 않았습니다 · container/Dockerfile\:2" in w.value for w in app.warning)
     assert any("triage scan" in x.value and str(tmp_path) in x.value for x in app.code)
     hit = next(f for f in bundle.findings if f.vulnerability.aliases)
@@ -370,15 +371,17 @@ def test_action_card_fix_metadata(ui, monkeypatch, tmp_path, status):
         assert any("triage scan" in code.value for code in card.code)
     assert ui.md_escape(top.component.version) in cards[0].label
     buttons = {button.key: button for button in app.get("download_button")}
-    assert len(buttons) == (3 if status else 1)
+    assert len(buttons) == (2 if status else 1)
+    if status:
+        assert buttons["finals_top_patch"].proto.type == "primary"
     # 확인 필요 항목의 업무 요청서는 받는 팀별로 한 파일에 묶어 내려받는다.
     text = ui.work_requests_text("svc", [upgrade, image, confirm])
     for action in (upgrade, image, confirm):
         if action.work_request:
             assert f"## {action.team or '담당 팀 미정'}" in text and action.work_request.title in text
-    steps = next(value for value in app.markdown.values if value.startswith("1. "))
-    assert "다시 점검" in steps
-    assert ("git apply" in steps) == bool(status)
+    assert "지금 할 일" in app.subheader.values
+    assert any("다시 점검" in value for value in app.markdown.values)
+    assert any("git apply" in value for value in app.markdown.values) == bool(status)
     assert any(code.value.startswith("uv run triage scan") and code.value.endswith("out/recheck")
                for code in app.code)
     if status is None:
