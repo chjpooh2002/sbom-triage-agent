@@ -10,6 +10,13 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
 
+from triage.lookup import CACHE_DIR
+
+if __package__:
+    from ._osv_cache import OsvCache
+else:
+    from _osv_cache import OsvCache
+
 
 DEFAULT_GOLD = Path("eval/gold_finals.csv")
 STATES = {"exploitable": "affected", "not_affected": "not_affected", "in_triage": "undetermined"}
@@ -66,14 +73,27 @@ class ExtraCandidate:
 
 
 @dataclass(frozen=True)
+class VersionExclusion:
+    case: GoldCase
+    advisories: tuple[str, ...]
+
+    @property
+    def description(self) -> str:
+        return f"{self.case.description} (OSV {', '.join(self.advisories)})"
+
+
+@dataclass(frozen=True)
 class Score:
     accuracy: Ratio
+    accuracy_with_exclusions: Ratio
     recall: Ratio
     precision: Ratio
     missed_affected: tuple[GoldCase, ...]
     false_positives: tuple[GoldCase, ...]
     missing_core: tuple[GoldCase, ...]
+    version_exclusions: tuple[VersionExclusion, ...]
     extras: tuple[ExtraCandidate, ...]
+    undetermined: int
     aux_undetermined: Ratio
     aux_missing_info: Ratio
 
@@ -205,6 +225,11 @@ def _groups(*runs: Iterable[Candidate]) -> Iterable[list[list[Candidate]]]:
     return groups.values()
 
 
+def _gold_version(value: str) -> str:
+    parts = value.split(maxsplit=1)
+    return parts[0] if parts else ""
+
+
 def _matched_groups(gold: Iterable[GoldCase], *runs: Iterable[Candidate]) -> Iterable[list[list[Candidate]]]:
     for group in _groups(gold, *runs):
         if len(group[0]) == 1:
@@ -214,9 +239,7 @@ def _matched_groups(gold: Iterable[GoldCase], *runs: Iterable[Candidate]) -> Ite
         by_version: dict[str, list[list[Candidate]]] = {}
         for index, entries in enumerate(group):
             for entry in entries:
-                version = entry.version
-                if index == 0 and version:
-                    version = version.split(maxsplit=1)[0]
+                version = _gold_version(entry.version) if index == 0 else entry.version
                 by_version.setdefault(version, [[] for _ in group])[index].append(entry)
         yield from by_version.values()
 
@@ -228,15 +251,23 @@ def _state(entries: list[Candidate]) -> str:
     return next(iter(states), "absent")
 
 
-def score(gold: list[GoldCase], predictions: list[Candidate]) -> Score:
+def score(gold: list[GoldCase], predictions: list[Candidate], osv_cache: OsvCache | None = None) -> Score:
     exact = affected = detected = aux = aux_undetermined = aux_missing_info = core = 0
-    misses, false_positives, missing_core, extras = [], [], [], []
+    exclusion_hits = undetermined = 0
+    misses, false_positives, missing_core, version_exclusions, extras = [], [], [], [], []
     for cases, entries in _matched_groups(gold, predictions):
+        state = _state(entries)
+        undetermined += state == "undetermined"
         if not cases:
             extras.append(ExtraCandidate(entries[0], frozenset(entry.state for entry in entries)))
             continue
-        state = _state(entries)
         for case in cases:
+            advisories = ()
+            if state == "absent" and osv_cache is not None:
+                advisories = osv_cache.outside_advisories(case.aliases | {case.vuln_id},
+                                                         case.component, _gold_version(case.version))
+                if advisories:
+                    version_exclusions.append(VersionExclusion(case, advisories))
             if case.scoring_set == "aux":
                 aux += 1
                 aux_undetermined += state == "undetermined"
@@ -245,7 +276,10 @@ def score(gold: list[GoldCase], predictions: list[Candidate]) -> Score:
             core += 1
             exact += state == case.state
             if state == "absent":
-                missing_core.append(case)
+                if advisories:
+                    exclusion_hits += case.state == "not_affected"
+                else:
+                    missing_core.append(case)
             if case.state == "affected":
                 affected += 1
                 if state == "affected":
@@ -256,10 +290,13 @@ def score(gold: list[GoldCase], predictions: list[Candidate]) -> Score:
                 false_positives.append(case)
     extra_affected = sum("affected" in entry.states for entry in extras)
     return Score(
-        Ratio(exact, core), Ratio(detected, affected),
-        Ratio(detected, detected + len(false_positives) + extra_affected),
-        tuple(misses), tuple(false_positives), tuple(missing_core), tuple(extras),
-        Ratio(aux_undetermined, aux), Ratio(aux_missing_info, aux),
+        accuracy=Ratio(exact, core),
+        accuracy_with_exclusions=Ratio(exact + exclusion_hits, core),
+        recall=Ratio(detected, affected),
+        precision=Ratio(detected, detected + len(false_positives) + extra_affected),
+        missed_affected=tuple(misses), false_positives=tuple(false_positives), missing_core=tuple(missing_core),
+        version_exclusions=tuple(version_exclusions), extras=tuple(extras), undetermined=undetermined,
+        aux_undetermined=Ratio(aux_undetermined, aux), aux_missing_info=Ratio(aux_missing_info, aux),
     )
 
 
@@ -275,10 +312,12 @@ def agreement(first: list[Candidate], second: list[Candidate], gold: Iterable[Go
 
 def render(label: str, result: Score, repeat: Ratio | None = None) -> str:
     metrics = [
-        ("core 정확 일치율", result.accuracy),
+        ("core 정확 일치율 (엄격)", result.accuracy),
+        ("core 정확 일치율 (버전 제외 인정)", result.accuracy_with_exclusions),
         ("core 영향 있음 재현율", result.recall),
         ("core 영향 있음 정밀도", result.precision),
         ("core 후보 누락", len(result.missing_core)),
+        ("버전 범위 밖 제외", len(result.version_exclusions)),
         ("정답에 없는 추가 후보", len(result.extras)),
         ("aux 판단 유보율", result.aux_undetermined),
         ("aux missing_info 기재율", result.aux_missing_info),
@@ -290,6 +329,7 @@ def render(label: str, result: Score, repeat: Ratio | None = None) -> str:
     for title, entries in (
         ("놓친 영향 있음", result.missed_affected), ("오탐", result.false_positives),
         ("누락 후보 (core)", result.missing_core), ("추가 후보", result.extras),
+        ("버전 범위 밖 제외", result.version_exclusions),
         ("정답지 밖 영향 있음 검토", tuple(entry for entry in result.extras if "affected" in entry.states)),
     ):
         lines.extend(["", f"## {title} ({len(entries)})", ""])
@@ -302,6 +342,7 @@ def render(label: str, result: Score, repeat: Ratio | None = None) -> str:
 def add_inputs(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("label", help="산출물 파일명의 라벨")
     parser.add_argument("--gold", type=Path, default=DEFAULT_GOLD)
+    parser.add_argument("--osv-cache", type=Path, default=CACHE_DIR, help="OSV 상세 권고 캐시 디렉터리")
     parser.add_argument("--service", help="정답 CSV의 서비스 이름")
     parser.add_argument("--component-alias", action="append", default=[], metavar="정답이름=SBOM이름",
                         help="정답지와 SBOM의 구성요소 표시명이 다른 경우에만 지정")
@@ -329,7 +370,7 @@ def main() -> None:
         if args.run2:
             _, second = load_run(args.run2, gold, label, cases[0].service)
             repeat = agreement(first, second, cases)
-        report = render(label, score(cases, first), repeat)
+        report = render(label, score(cases, first, OsvCache(args.osv_cache)), repeat)
         args.out.mkdir(parents=True, exist_ok=True)
         (args.out / f"score-{label}.md").write_text(report, encoding="utf-8")
     except (OSError, ValueError) as exc:

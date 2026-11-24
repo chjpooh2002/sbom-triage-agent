@@ -35,9 +35,22 @@ def _write_sbom(path, components, vulnerabilities):
 def _runner_env(tmp_path, code):
     package = tmp_path / "triage"
     package.mkdir()
-    (package / "__init__.py").write_text("", encoding="utf-8")
+    (package / "__init__.py").write_text(
+        "from pkgutil import extend_path\n__path__ = extend_path(__path__, __name__)\n", encoding="utf-8"
+    )
     (package / "finals.py").write_text(code, encoding="utf-8")
     return {"PYTHONPATH": str(tmp_path)}
+
+
+def _write_advisory(cache, identifier, *, package="widget", kind="ECOSYSTEM", events=None):
+    snapshot = cache / "2040-01-01"
+    snapshot.mkdir(parents=True, exist_ok=True)
+    doc = {
+        "id": f"OSV-{identifier}", "aliases": [identifier],
+        "affected": [{"package": {"ecosystem": "PyPI", "name": package},
+                      "ranges": [{"type": kind, "events": events or [{"introduced": "0"}, {"fixed": "2.0"}]}]}],
+    }
+    (snapshot / f"osv-vuln-{identifier}.json").write_text(json.dumps(doc), encoding="utf-8")
 
 
 @pytest.fixture
@@ -45,7 +58,7 @@ def saved_runs(tmp_path):
     gold = tmp_path / "gold.csv"
     with gold.open("w", encoding="utf-8", newline="") as stream:
         writer = csv.writer(stream)
-        writer.writerow(("service", "vuln_id", "aliases", "component", "expected_state", "scoring_set"))
+        writer.writerow(("service", "vuln_id", "aliases", "component", "expected_state", "scoring_set", "version"))
         for identifier, aliases, state, subset in (
             ("FICT-1", "ALT-1;BACKUP-1", "affected", "core"),
             ("FICT-2", "", "not_affected", "core"),
@@ -93,7 +106,8 @@ def test_score_and_repeat_include_one_sided_candidates(tmp_path, saved_runs):
     assert result.returncode == 0, result.stderr
     table = (out / "score-T.md").read_text(encoding="utf-8")
     assert result.stdout == table
-    assert "| core 정확 일치율 | 50.0% (2/4) |" in table
+    assert "| core 정확 일치율 (엄격) | 50.0% (2/4) |" in table
+    assert "| core 정확 일치율 (버전 제외 인정) | 50.0% (2/4) |" in table
     assert "| core 영향 있음 재현율 | 50.0% (1/2) |" in table
     assert "| core 영향 있음 정밀도 | 33.3% (1/3) |" in table
     assert "| core 후보 누락 | 1 |" in table
@@ -132,33 +146,83 @@ def test_score_uses_install_version_only_for_shared_gold_key(tmp_path):
     result = _run("finals_score", "T", "--gold", gold, "--sbom", first, "--run2", second, "--out", tmp_path)
 
     assert result.returncode == 0, result.stderr
-    assert "| core 정확 일치율 | 100.0% (2/2) |" in result.stdout
+    assert "| core 정확 일치율 (엄격) | 100.0% (2/2) |" in result.stdout
     assert "| core 영향 있음 정밀도 | 100.0% (1/1) |" in result.stdout
     assert "| aux 판단 유보율 | 100.0% (1/1) |" in result.stdout
     assert "| run1·run2 판정 일치율 | 100.0% (4/4) |" in result.stdout
     assert f"## 추가 후보 (1)\n\n- {SERVICE} / FICT-1 / widget @ 5.0 (not_affected)" in result.stdout
 
 
-def test_saved_ablation_reads_only_final_totals(tmp_path, saved_runs):
+def test_missing_candidates_need_cached_osv_range_to_count_as_excluded(tmp_path):
+    gold = tmp_path / "gold.csv"
+    cache = tmp_path / "cache"
+    _write_advisory(cache, "FICT-FIXED")
+    _write_advisory(cache, "FICT-BEFORE", events=[{"introduced": "3.0"}])
+    _write_advisory(cache, "FICT-LAST", events=[{"introduced": "0"}, {"last_affected": "2.0"}])
+    _write_advisory(cache, "FICT-OTHER", package="other")
+    _write_advisory(cache, "FICT-UNKNOWN")
+    _write_advisory(cache, "FICT-GIT", kind="GIT")
+    with gold.open("w", encoding="utf-8", newline="") as stream:
+        writer = csv.writer(stream)
+        writer.writerow(("service", "vuln_id", "aliases", "component", "expected_state", "scoring_set", "version"))
+        for key, state, version in (
+            ("FIXED", "not_affected", "2.0 (pinned)"),
+            ("BEFORE", "affected", "2.0"),
+            ("LAST", "not_affected", "2.0"),
+            ("OTHER", "not_affected", "3.0"),
+            ("UNKNOWN", "not_affected", "3.x"),
+            ("GIT", "not_affected", "3.0"),
+            ("NO-CACHE", "not_affected", "3.0"),
+            ("PRESENT", "not_affected", "3.0"),
+        ):
+            writer.writerow((SERVICE, f"FICT-{key}", "", "Widget", state, "core", version))
+    sbom = tmp_path / "sbom-T.json"
+    _write_sbom(sbom, [{"type": "library", "bom-ref": "dep", "name": "Widget"}],
+                [_vex("FICT-PRESENT", "not_affected")])
+
+    result = _run("finals_score", "T", "--gold", gold, "--sbom", sbom, "--out", tmp_path, "--osv-cache", cache)
+
+    assert result.returncode == 0, result.stderr
+    table = result.stdout
+    assert "| core 정확 일치율 (엄격) | 12.5% (1/8) |" in table
+    assert "| core 정확 일치율 (버전 제외 인정) | 25.0% (2/8) |" in table
+    assert "| core 후보 누락 | 5 |" in table
+    assert "| 버전 범위 밖 제외 | 2 |" in table
+    exclusions = table.split("## 버전 범위 밖 제외 (2)")[1].split("\n## ")[0]
+    assert "FICT-FIXED / Widget @ 2.0 (pinned) (OSV OSV-FICT-FIXED)" in exclusions
+    assert "FICT-BEFORE / Widget @ 2.0 (OSV OSV-FICT-BEFORE)" in exclusions
+
+
+def test_saved_ablation_writes_csv_and_reads_judge_and_run_totals(tmp_path, saved_runs):
     gold, first, second = saved_runs
     out = tmp_path / "out"
-    for path, data in (
-        (first, {"total_tokens": "측정 불가", "total_tokens_reason": "토큰 미기록", "total_seconds": 1.25}),
-        (second, {"total_tokens": 132, "total_seconds": 2.5, "reported_reasoning_tokens": 45}),
+    cache = tmp_path / "cache"
+    _write_advisory(cache, "FICT-11")
+    with gold.open("a", encoding="utf-8", newline="") as stream:
+        csv.writer(stream).writerow((SERVICE, "FICT-11", "", "Widget", "not_affected", "core", "3.0"))
+    for path, event, data in (
+        (first, "detail.end", {"total_tokens": "측정 불가", "total_tokens_reason": "토큰 미기록", "total_seconds": 1.25}),
+        (second, "end", {"total_tokens": 132, "total_seconds": 2.5, "reported_reasoning_tokens": 45}),
     ):
         log = path.with_name("log-T-run1.jsonl")
-        log.write_text(json.dumps({"stage": "model", "event": "usage", "data": {"total_tokens": 999}})
-                       + "\n" + json.dumps({"stage": "run", "event": "end", "data": data}) + "\n",
-                       encoding="utf-8")
+        events = [
+            {"stage": "judge", "event": event, "data": {"llm_calls": 4, "total_tokens": 999}},
+            {"stage": "run", "event": "end", "data": dict(data, llm_calls=999)},
+        ]
+        log.write_text("".join(json.dumps(record) + "\n" for record in events), encoding="utf-8")
     result = _run("ablation", "T", "--gold", gold, "--saved", tmp_path / "saved", "--out", out,
-                  "--stage", "rules", "--stage", "model", "--component-alias", COMPONENT_ALIAS)
+                  "--stage", "rules", "--stage", "model", "--component-alias", COMPONENT_ALIAS, "--osv-cache", cache)
 
     assert result.returncode == 0, result.stderr
     table = (out / "ablation.md").read_text(encoding="utf-8")
     assert result.stdout == table
-    assert "| 결정적 선판정 | 50.0% (2/4) | 50.0% (1/2) | 1 | 측정 불가 | 1.25 |" in table
-    assert "| + 모델 판정 | 75.0% (3/4) | 50.0% (1/2) | 0 | 132 | 2.5 |" in table
+    assert "| 결정적 선판정 | 40.0% (2/5) | 60.0% (3/5) | 50.0% (1/2) | 1 | 1 | 측정 불가 | 측정 불가 | 1.25 |" in table
+    assert "| + 모델 판정 | 60.0% (3/5) | 80.0% (4/5) | 50.0% (1/2) | 0 | 2 | 4 | 132 | 2.5 |" in table
     assert "토큰 미기록" in table
+    with (out / "ablation.csv").open(encoding="utf-8", newline="") as stream:
+        rows = list(csv.reader(stream))
+    assert rows == [line.strip("|").strip().split(" | ") for line in table.splitlines()
+                    if line.startswith("|") and not line.startswith("| ---")]
 
 
 @pytest.mark.parametrize(("adapter", "message"), [
@@ -186,6 +250,7 @@ import os
 import shutil
 
 def default_judge():
+    assert os.environ['SBOMTRIAGE_LLM_CACHE'] == 'off'
     return str
 
 def run_scan(label, root, out_dir, *, offline, judge):
@@ -195,12 +260,14 @@ def run_scan(label, root, out_dir, *, offline, judge):
     assert tuple(os.environ[key] for key in flags) == ('on', 'off', 'off')
     shutil.copyfile(root / 'saved' / 'rules' / f'sbom-{label}.json', out_dir / f'sbom-{label}.json')
     data = {'total_tokens': 1, 'total_seconds': 0.5}
-    record = {'stage': 'run', 'event': 'end', 'data': data}
-    (out_dir / f'log-{label}-run1.jsonl').write_text(json.dumps(record), encoding='utf-8')
+    records = [{'stage': 'judge', 'event': 'end', 'data': {'llm_calls': 0}},
+               {'stage': 'run', 'event': 'end', 'data': data}]
+    (out_dir / f'log-{label}-run1.jsonl').write_text(chr(10).join(map(json.dumps, records)), encoding='utf-8')
 '''
     )
+    env["SBOMTRIAGE_LLM_CACHE"] = "on"
     result = _run("ablation", "T", "--gold", gold, "--root", tmp_path, "--out", tmp_path,
                   "--stage", "model", "--offline", "--component-alias", COMPONENT_ALIAS, env=env)
 
     assert result.returncode == 0, result.stderr
-    assert "| + 모델 판정 | 50.0% (2/4) | 50.0% (1/2) | 1 | 1 | 0.5 |" in result.stdout
+    assert "| + 모델 판정 | 50.0% (2/4) | 50.0% (2/4) | 50.0% (1/2) | 1 | 1 | 0 | 1 | 0.5 |" in result.stdout
