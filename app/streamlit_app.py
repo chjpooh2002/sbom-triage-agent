@@ -13,6 +13,7 @@ from importlib import import_module
 from pathlib import Path, PureWindowsPath
 from queue import Empty, Queue
 from stat import S_IFDIR, S_IFMT, S_IFREG
+from threading import Lock
 from zipfile import BadZipFile, ZipFile
 
 import streamlit as st
@@ -147,8 +148,14 @@ def load_result(directory: Path):
         raise ValueError("저장 결과 경로가 허용되지 않습니다.")
     meta = SavedResultMeta.model_validate_json(checked_child(directory, "meta.json").read_bytes())
     bundle = TriageBundle.model_validate_json(checked_child(directory, "bundle.json").read_bytes())
-    downloads = {kind: (name, checked_child(directory, name).read_bytes())
-                 for kind, name in meta.downloads.items() if kind in DOWNLOADS}
+    downloads = {}
+    for kind, name in meta.downloads.items():
+        if kind not in DOWNLOADS:
+            continue
+        path = checked_child(directory, name)
+        if kind == "report" and not path.exists():
+            continue  # 저장된 판정으로 다시 내보낼 수 있다.
+        downloads[kind] = (name, path.read_bytes())
     return bundle, downloads, meta.failures, meta.command
 
 # 콜론도 이스케이프해 Streamlit이 본문의 URL을 자동 링크로 읽지 않게 한다.
@@ -356,7 +363,7 @@ RESULT_VIEWS = ("조치하기", "판정 내역", "보고서·파일")
 
 def reset_workspace():
     for key in ("active_action", "board_filter", "queue_desktop", "queue_mobile", "result_view", "finding_query",
-                "refreshed_pdf"):
+                "report_export"):
         st.session_state.pop(key, None)
 
 
@@ -382,16 +389,44 @@ def open_search_action(number):
     st.session_state["result_view"] = RESULT_VIEWS[0]
 
 
+def show_overview(metrics, rows):
+    work = metrics["오늘 할 일"]
+    fixes = sum(1 for row in rows if row["영향 있음"])
+    verdicts = [("영향 있음", metrics["영향 있음"], "affected"),
+                ("확인 필요", metrics["확인 필요"], "pending"),
+                ("영향 없음", metrics["영향 없음"], "unaffected")]
+    candidates = sum(count for _, count, _ in verdicts)
+    labels = "".join(f'<div class="{state}"><dt>{label}</dt><dd>{count:,}</dd></div>'
+                     for label, count, state in verdicts)
+    segments = "".join(f'<i class="{state}" style="flex-grow:{count}"></i>'
+                       for _, count, state in verdicts if count)
+    st.html(f"""
+        <section class="scan-overview" aria-label="점검 요약">
+          <div class="overview-group overview-work">
+            <dl class="overview-total"><dt>처리할 일</dt><dd>{work:,}<small>개</small></dd></dl>
+            <dl class="overview-breakdown">
+              <div><dt>수정할 일</dt><dd>{fixes:,}</dd></div>
+              <div><dt>확인할 일</dt><dd>{work - fixes:,}</dd></div>
+            </dl>
+          </div>
+          <div class="overview-group overview-findings">
+            <dl class="overview-total"><dt>취약점 후보</dt><dd>{candidates:,}<small>건</small></dd></dl>
+            <div class="overview-distribution">
+              <div class="verdict-bar" aria-hidden="true">{segments}</div>
+              <dl class="overview-breakdown">{labels}</dl>
+            </div>
+          </div>
+        </section>""")
+
+
 def show_queue(rows):
     """같은 선택을 넓은 화면에서는 목록으로, 좁은 화면에서는 선택 상자로 조작한다."""
-    fix_count = sum(bool(r["영향 있음"]) for r in rows)
-    st.html(f'<div class="queue-heading"><h3>조치 목록</h3>'
-            f'<span>수정 대상 {fix_count}개 · 확인 필요 {len(rows) - fix_count}개</span></div>')
+    st.html('<h3 class="queue-heading">조치 목록</h3>')
     filters = ["전체", *dict.fromkeys(r["구분"] for r in rows)]
     selected = "전체"
     if len(filters) > 2:
         selected = st.segmented_control("조치 구분", filters, default="전체", key="board_filter",
-                                        format_func=lambda s: "수정 대상" if s == "바로 고칠 것" else s,
+                                        format_func=lambda s: {"바로 고칠 것": "수정", "확인 필요": "확인"}.get(s, s),
                                         label_visibility="collapsed") or "전체"
     choices = [r["순서"] for r in rows if selected == "전체" or r["구분"] == selected]
     active = st.session_state.get("active_action")
@@ -417,24 +452,65 @@ def show_queue(rows):
     return active
 
 
-def saved_pdf_controls(panel, directory, downloads):
-    from triage.output.report_pdf.saved import render_saved_report
+class ReportExport:
+    """한 세션의 선택된 결과에 대해 PDF와 생성 기록을 같은 실행에서 받는다."""
 
-    if panel.button("현재 양식으로 PDF 만들기", key="rerender_saved", help="저장된 판정과 근거로 다시 그립니다."):
-        try:
-            with tempfile.TemporaryDirectory() as scratch, panel, st.spinner("보고서 생성 중…"):
-                out = Path(scratch) / "report.pdf"
-                run_log = render_saved_report(checked_child(directory, "bundle.json"), out)
-                st.session_state["refreshed_pdf"] = (str(directory), out.read_bytes(), run_log.read_bytes())
-        except (ValueError, OSError):
-            panel.error("PDF를 만들 수 없습니다. 저장 묶음과 인쇄 엔진을 확인해 주세요.")
-    result = st.session_state.get("refreshed_pdf")
-    if result and result[0] == str(directory):
-        downloads["report"] = (f"report-{directory.parent.name}.pdf", result[1])
-        panel.success("저장된 판정으로 현재 양식의 PDF를 만들었습니다.")
-        panel.download_button("보고서 재생성 기록", result[2], "report.jsonl", "application/jsonl")
-        return True
-    return False
+    def __init__(self, directory: Path | None, bundle: TriageBundle, command: str | None, patch_name: str):
+        self.directory = directory
+        self.bundle = bundle if directory is None else None
+        self.command = command or ""
+        self.patch_name = patch_name
+        self._lock = Lock()
+        self._files: tuple[bytes, bytes] | None = None
+
+    def _render(self) -> tuple[bytes, bytes]:
+        from triage.output.report_pdf.saved import render_saved_report
+
+        # Streamlit은 다운로드를 별도 스레드에서 처리한다. 실패는 캐시하지 않는다.
+        with self._lock:
+            if self._files is not None:
+                return self._files
+            try:
+                with tempfile.TemporaryDirectory() as scratch:
+                    out = Path(scratch) / "report.pdf"
+                    if self.directory is not None:
+                        source = checked_child(self.directory, "bundle.json")
+                    else:
+                        source = out.with_name("bundle.json")
+                        source.write_text(self.bundle.model_dump_json(), encoding="utf-8")
+                        names = {"patch": self.patch_name} if self.patch_name else {}
+                        meta = SavedResultMeta(downloads=names, failures={}, command=self.command)
+                        source.with_name("meta.json").write_text(meta.model_dump_json(), encoding="utf-8")
+                    record = render_saved_report(source, out)
+                    self._files = out.read_bytes(), record.read_bytes()
+            except (ValueError, OSError, RuntimeError):
+                raise ValueError("PDF를 만들 수 없습니다. 다시 시도하거나 보고서·파일에서 점검 기록을 확인하세요.") from None
+            return self._files
+
+    def pdf(self) -> bytes:
+        return self._render()[0]
+
+    def log(self) -> bytes:
+        return self._render()[1]
+
+
+def show_pdf_export(slot, directory, bundle, downloads, command):
+    original = downloads.get("report")
+    if directory is None and original and original[1]:
+        name, data = original
+        help_text = "이번 점검에서 만든 PDF 보고서를 받습니다."
+    else:
+        export = st.session_state.get("report_export")
+        if export is None or export.directory != directory or (directory is None and export.bundle is not bundle):
+            patch, contents = downloads.get("patch", ("", b""))
+            export = ReportExport(directory, bundle, command, patch if contents else "")
+            st.session_state["report_export"] = export
+        label = directory.parent.name if directory is not None else bundle.meta.get("label", "")
+        name = f"report-{label}.pdf" if isinstance(label, str) and valid_filename(label) else "report.pdf"
+        data = export.pdf
+        help_text = "저장된 판정으로 현재 양식의 PDF를 만들어 바로 내려받습니다."
+    slot.download_button("PDF 내보내기", data, name, DOWNLOADS["report"][1], key="finals_top_report",
+                         type="primary", icon=":material/download:", on_click="ignore", help=help_text)
 
 
 def show_files(label, actions, downloads, fix_check, command):
@@ -442,13 +518,15 @@ def show_files(label, actions, downloads, fix_check, command):
     report, assets = st.columns([1, 1], gap="large")
     with report:
         st.subheader("보고서 공유")
-        refreshed = saved_pdf_controls(report, directory, downloads) if directory else False
-        if "report" in downloads:
+        if directory and downloads.get("report", ("", b""))[1]:
             name, data = downloads["report"]
-            title = "점검 당시 PDF 내려받기" if directory and not refreshed else "PDF 보고서 내려받기"
-            st.download_button(title, data, name, DOWNLOADS["report"][1], key="finals_top_report", type="primary")
+            st.download_button("점검 당시 PDF 내려받기", data, name, DOWNLOADS["report"][1],
+                               key="archived_report", on_click="ignore")
         else:
-            st.caption("생성된 PDF가 없습니다.")
+            st.caption("현재 보고서는 화면 상단의 ‘PDF 내보내기’에서 받으세요.")
+        if export := st.session_state.get("report_export"):
+            st.download_button("보고서 재생성 기록", export.log, "report.jsonl", "application/jsonl",
+                               key="export_log", on_click="ignore", help="상단에서 내보내는 PDF와 같은 실행의 기록입니다.")
         teams = team_requests(actions)
         if teams:
             st.markdown("**부서별 확인 요청서**")
@@ -503,7 +581,7 @@ def show_search(query, findings, membership):
 def show_edit(edit):
     old = escape(edit["before"])
     st.html(f'<div class="old-line">현재 줄 <code>{old}</code></div>')
-    st.markdown("**바꿀 줄** · 복사해서 기존 줄에 붙여 넣으세요.")
+    st.markdown("**바꿀 줄** · 복사해 기존 줄을 교체하세요.")
     st.code(edit["after"], language=None, wrap_lines=True)
 
 
@@ -628,6 +706,7 @@ def show_results(bundle, downloads, failures, command=None) -> None:
             st.error(md_escape(Redactor().text(item.message)))
     if failures:
         st.warning("일부 단계 실패")
+    show_overview(metrics, rows)
     work, review, files = st.tabs(RESULT_VIEWS, key="result_view", on_change="rerun")
     with work:
         if rows:
@@ -646,9 +725,6 @@ def show_results(bundle, downloads, failures, command=None) -> None:
                     st.subheader("현재 수정할 항목이 없습니다")
                     st.markdown(md_escape(conclusion))
     with review:
-        with st.container(key="summary_metrics"):
-            for column, (name, count) in zip(st.columns(4), metrics.items()):
-                column.metric(name, count)
         for stage, reason in failures.items():
             st.markdown(f"{stage_label(stage)} · {md_escape(reason)}")
         limits = bundle.meta.get("limitations") or []
@@ -689,11 +765,16 @@ def finals_screen() -> None:
         history = []
     live = st.session_state.get("finals_result")
     default = 1 if history and not live else 0
-    current = st.session_state.get("finals_history", history[0] if default else None)
+    initial = history[0] if default else None
+    current = st.session_state.get("finals_history", initial)
+    if current is not None and current not in history:
+        current = initial
+        st.session_state["finals_history"] = current
+        reset_workspace()
     reading = current is not None or live is not None
     with st.container(key="workspace_result_header" if reading else "workspace_header"):
         if reading:
-            left, right, new = st.columns([2, 2, .7], vertical_alignment="center")
+            left, right, export_slot, new = st.columns([1.25, 1.65, .8, .55], vertical_alignment="center")
             left.title("취약점 조치")
             new.button("새 점검", key="new_scan", on_click=start_new_scan)
         else:
@@ -707,20 +788,23 @@ def finals_screen() -> None:
 
         selected = right.selectbox("저장된 결과 열기", [None, *history], index=default, key="finals_history",
                                    format_func=result_name, on_change=change_result)
-    if selected is not None:
-        try:
-            restored = load_result(selected)
-        except (OSError, ValueError, RuntimeError):
-            st.warning("저장된 점검 결과를 읽을 수 없습니다.")
+    if reading:
+        if selected is not None:
+            try:
+                bundle, downloads, failures, command = load_result(selected)
+            except (OSError, ValueError, RuntimeError):
+                st.warning("저장된 점검 결과를 읽을 수 없습니다.")
+                return
         else:
-            show_results(*restored)
-        return
-    if live is not None:
-        if st.session_state.get("save_notice"):
-            st.warning("이번 점검 결과를 저장할 수 없습니다.")
-        show_results(*live, command=st.session_state.get("finals_command"))
-        with st.expander("점검 단계 기록"):
-            show_progress({stage: st.empty() for stage in STAGES}, st.session_state.get("finals_stages", {}))
+            bundle, downloads, failures = live
+            command = st.session_state.get("finals_command")
+            if st.session_state.get("save_notice"):
+                st.warning("이번 점검 결과를 저장할 수 없습니다.")
+        show_pdf_export(export_slot, selected, bundle, downloads, command)
+        show_results(bundle, downloads, failures, command=command)
+        if selected is None:
+            with st.expander("점검 단계 기록"):
+                show_progress({stage: st.empty() for stage in STAGES}, st.session_state.get("finals_stages", {}))
         return
     try:
         finals = load_scan()
