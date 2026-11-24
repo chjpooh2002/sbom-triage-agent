@@ -1,4 +1,4 @@
-"""File-local call arguments. A positive trace carries both source and call evidence."""
+"""File-local argument provenance and direct incoming edges from other request handlers."""
 from __future__ import annotations
 
 import ast
@@ -10,6 +10,7 @@ from .search import JS
 from .source import Files, Log, Query
 from .store import EvidenceStore
 from .lexer import Tokens
+from .links import CallIndex, Unit
 
 
 @dataclass(frozen=True)
@@ -51,11 +52,24 @@ def local_nodes(node):
         yield from local_nodes(child)
 
 
-def python_calls(src, symbol):
-    try:
-        tree = ast.parse(src.text)
-    except (SyntaxError, ValueError, RecursionError):
-        return
+@dataclass
+class Call:
+    handler: str | None
+    framework: str | None
+    flow: Trace
+    route: int
+    start: int
+    end: int
+    callee: str
+    position: int
+    arity: int
+
+
+def matches(callee, symbol):
+    return callee == symbol or ("." not in symbol and callee.split(".")[-1] == symbol)
+
+
+def python_calls(tree, symbol, bindings):
     request_names = set()
     route_objects = {"app", "bp", "blueprint"}
     constructors = set()
@@ -128,12 +142,13 @@ def python_calls(src, symbol):
                 simple = isinstance(stmt, (ast.Expr, ast.Return, ast.Assign, ast.AnnAssign))
                 for call in (n for n in nodes if isinstance(n, ast.Call)):
                     name = dotted(call.func)
-                    if name != symbol and ("." in symbol or name.split(".")[-1] != symbol):
+                    if not matches(name, symbol) and not (route and name in bindings):
                         continue
                     args = [*call.args, *(kw.value for kw in call.keywords)]
                     flow = combine(trace(a) for a in args) if simple else None
-                    yield (fn.name, "flask" if route else None, flow,
-                           route.lineno if route else fn.lineno, call.lineno, call.end_lineno)
+                    yield Call(fn.name, "flask" if route else None, flow,
+                               route.lineno if route else fn.lineno, call.lineno, call.end_lineno,
+                               name, fn.lineno, len(args))
                 if isinstance(stmt, (ast.Assign, ast.AnnAssign)) and stmt.value:
                     observed = trace(stmt.value)
                     targets = stmt.targets if isinstance(stmt, ast.Assign) else [stmt.target]
@@ -284,39 +299,37 @@ def token_flow(t, start, end, values, handler):
     return None
 
 
-def token_calls(src, symbol, java):
-    t = Tokens(src.text)
-    handlers = spring_handlers(t) if java else js_handlers(t)
+def token_calls(unit, symbol, bindings):
+    t = unit.lex
+    handlers = spring_handlers(t) if unit.ext == ".java" else js_handlers(t)
     leaf = symbol.split(".")[-1]
+    names = {leaf} | {name.rsplit(".", 1)[-1] for name in bindings}
     observed = set()
 
-    def is_call(i):
-        if t.at(i) != leaf or t.at(i+1) != "(" or i+1 not in t.pairs:
-            return False
+    def callee(i):
+        if t.at(i) not in names or t.at(i+1) != "(" or i+1 not in t.pairs:
+            return ""
         after = t.at(t.pairs[i+1]+1)
         if t.at(i-1) in {"function", "new", "@"} or after in {"{", "throws"}:
-            return False
-        if "." not in symbol:
-            return True
+            return ""
         first = i
         while first >= 2 and t.at(first-1) == "." and t.at(first-2).isidentifier():
             first -= 2
-        return "".join(t.words[first:i+1]) == symbol
+        # A suffix of a computed receiver is not a resolvable import/field.
+        if t.at(first-1) in {".", "?."}:
+            return "." + t.at(i)
+        return "".join(t.words[first:i+1])
 
     for h in handlers:
         values = h.params.copy()
         blocks = []
         i = h.body+1
         while i < h.end:
+            if i in unit.nested:
+                i = unit.nested[i]
+                continue
             word = t.at(i)
             if word == "{" and i in t.pairs:
-                previous = t.at(i-1)
-                # A callback/local function may shadow request parameters.
-                if previous == "=>" or (previous == ")" and
-                        t.at(t.pairs.get(i-1, 0)-1) not in {"if", "for", "while", "switch", "catch",
-                                                          "synchronized", "try"}):
-                    i = t.pairs[i]+1
-                    continue
                 blocks.append(t.pairs[i])
             if blocks and i == blocks[-1]:
                 blocks.pop()
@@ -328,7 +341,8 @@ def token_calls(src, symbol, java):
                 if t.at(i-2) == ")" and t.at(t.pairs.get(i-2, 0)-1) in {"if", "for", "while"}:
                     flow = None
                 values[t.at(i-1)] = assigned(flow, t.lines[i])
-            if is_call(i):
+            name = callee(i)
+            if name and (matches(name, symbol) or name in bindings):
                 observed.add(i)
                 end = t.pairs[i+1]
                 start = j = i+2
@@ -338,26 +352,69 @@ def token_calls(src, symbol, java):
                         args.append(token_flow(t, start, j, values, h))
                         start = j+1
                     j = t.pairs[j]+1 if j in t.pairs and j < t.pairs[j] else j+1
-                yield h.name, h.framework, combine(args), t.lines[h.route], t.lines[i], t.lines[end]
+                yield Call(h.name, h.framework, combine(args), t.lines[h.route], t.lines[i],
+                           t.lines[end], name, i, len(args) if end > i+2 else 0)
             i += 1
     for i, word in enumerate(t.words):
-        if word == leaf and i not in observed and is_call(i):
-            yield None, None, None, t.lines[i], t.lines[i], t.lines[t.pairs[i+1]]
+        if word == leaf and i not in observed and (name := callee(i)) and matches(name, symbol):
+            yield Call(None, None, None, t.lines[i], t.lines[i], t.lines[t.pairs[i+1]], name, i, 0)
 
 
 def find_callers(root, files: Files, symbol: str, *, store: EvidenceStore | None = None,
                  include_excluded: bool = False, log: Log = None):
-    """Report observed same-file call sites and yes/no/unknown argument provenance."""
+    """Each hit retains local argument provenance. caller_paths lists direct external
+    handler calls to its enclosing function/method, with evidence from both files.
+    """
     q = Query(root, files, store, "callers", include_excluded, log)
     hits = []
-    for src in q.sources(lambda p: p.suffix in JS | {".py", ".java"}):
-        ext = Path(src.name).suffix
-        calls = python_calls(src, symbol) if ext == ".py" else token_calls(src, symbol, ext == ".java")
-        for name, framework, flow, route, start, end in calls:
-            lines = flow.lines if flow is not None else ()
-            ranges = [(route, route), *((n, n) for n in lines), (start, end)]
-            refs = [q.cite(src, a, b) for a, b in dict.fromkeys(ranges)]
-            hits.append(dict(file=src.name, line=start, handler=name, framework=framework,
-                             request_input="unknown" if flow is None else "yes" if flow.request else "no",
-                             evidence_ids=refs))
+    units = [Unit(src) for src in q.sources(lambda p: p.suffix in JS | {".py", ".java"})]
+    index = CallIndex(units)
+    targets = []
+    incoming = {}
+    for unit in units:
+        bindings = index.bindings(unit)
+        calls = (python_calls(unit.tree, symbol, bindings) if unit.tree is not None
+                 else token_calls(unit, symbol, bindings))
+        for call in calls:
+            if matches(call.callee, symbol):
+                targets.append((unit, call))
+            if call.framework and call.callee in bindings:
+                edge = index.resolve(unit, bindings[call.callee], call)
+                if edge:
+                    incoming.setdefault(edge.method, []).append((unit, call, edge))
+
+    cited = {}
+
+    def cite(src, first, last):
+        key = (src.name, first, last)
+        if key not in cited:
+            cited[key] = q.cite(src, first, last)
+        return cited[key]
+
+    def describe(unit, call):
+        lines = call.flow.lines if call.flow is not None else ()
+        refs = [cite(unit.src, n, n) for n in (call.route, *lines)]
+        refs.append(cite(unit.src, call.start, call.end))
+        return dict(file=unit.src.name, line=call.start, handler=call.handler, framework=call.framework,
+                    request_input="unknown" if call.flow is None else "yes" if call.flow.request else "no",
+                    evidence_ids=list(dict.fromkeys(refs)))
+
+    for unit, call in targets:
+        hit = describe(unit, call)
+        paths = []
+        method = unit.enclosing(call.position)
+        local_ids = hit["evidence_ids"].copy()
+        for caller, site, edge in incoming.get(method, ()):
+            handler = describe(caller, site)
+            handler["callee"] = site.callee
+            refs = [*handler["evidence_ids"], *(cite(caller.src, a, b) for a, b in edge.lines),
+                    cite(unit.src, edge.export_line, edge.export_line),
+                    cite(unit.src, method.line, method.line), *local_ids]
+            ids = list(dict.fromkeys(refs))
+            paths.append(dict(handler=handler, method=dict(file=method.file, name=method.name,
+                                                          line=method.line), evidence_ids=ids))
+            hit["evidence_ids"].extend(ids)
+        hit["caller_paths"] = paths
+        hit["evidence_ids"] = list(dict.fromkeys(hit["evidence_ids"]))
+        hits.append(hit)
     return q.finish(hits)
