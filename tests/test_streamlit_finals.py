@@ -416,6 +416,10 @@ def test_action_cards_search_details_and_threaded_progress(ui, monkeypatch, tmp_
     assert ui_threads and scan_threads[0] not in ui_threads
     assert overview_counts(app) == {"처리할 일": "3개", "수정할 일": "1", "확인할 일": "2", "취약점 후보": "7건",
                                     "영향 있음": "1", "확인 필요": "4", "영향 없음": "2"}
+    queue, detail = app.container(key="action_workspace").columns
+    assert queue.weight == detail.weight
+    assert queue.container(key="action_queue").proto.height_config.use_stretch
+    assert detail.container(key="action_detail").proto.height_config.use_stretch
     assert any("수정 버전을 먼저 확인하세요" in title for title in app.subheader.values)
     cards = [x for x in app.expander if "관련 취약점" in x.label]
     assert len(cards) == 1 and len(app.radio(key="queue_desktop").options) == 3
