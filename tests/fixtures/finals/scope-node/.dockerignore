@@ -1,0 +1,3 @@
+app/tests/
+!app/tests/keep.py
+**/drop.cfg
