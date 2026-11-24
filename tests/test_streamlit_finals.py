@@ -2,12 +2,14 @@ import importlib
 import inspect
 import json
 import sys
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from io import BytesIO
 from pathlib import Path
 from stat import S_IFLNK
 from threading import Event, get_ident
 from types import ModuleType, SimpleNamespace
+from xml.etree import ElementTree
 from zipfile import ZipFile, ZipInfo
 
 import pytest
@@ -31,6 +33,22 @@ def ui(monkeypatch, tmp_path):
 
 def run_app(timeout=60):
     return AppTest.from_string("from app.streamlit_app import main\nmain()", default_timeout=timeout).run()
+
+
+def open_files_tab(app):
+    app.session_state["result_view"] = "보고서·파일"
+    app.run()
+
+
+def overview_element(app):
+    overview, = [item for item in app.html if 'aria-label="점검 요약"' in item.value]
+    return overview
+
+
+def overview_counts(app):
+    overview = ElementTree.fromstring(overview_element(app).value.strip())
+    return {pair.findtext("dt"): "".join(pair.find("dd").itertext())
+            for pair in overview.iter() if pair.find("dt") is not None}
 
 
 def archive_with(name, contents=b"demo"):
@@ -128,8 +146,8 @@ def test_finals_calls_pipeline_and_keeps_downloads(monkeypatch, tmp_path):
     assert app.error.values == [warning]
     assert warning not in app.text.values
     elements = list(app.main)
-    conclusion = app.metric[0]
-    assert elements.index(app.error[0]) < elements.index(conclusion)
+    overview = overview_element(app)
+    assert elements.index(app.error[0]) < elements.index(overview)
     assert any("먼저 확인할 것" in value for value in app.markdown.values)
     assert calls[0][:2] == ("테스트 서비스", tmp_path.resolve())
     assert calls[0][3:] == (True, judge_provider)
@@ -138,16 +156,16 @@ def test_finals_calls_pipeline_and_keeps_downloads(monkeypatch, tmp_path):
     assert any("판정 6건" in item.value for item in app.text)
     assert any("PDF 보고서 생성 — 완료" in item.value for item in app.text)
     buttons = app.get("download_button")
-    # PDF는 '지금 할 일'의 결과 공유 단계에서, 나머지는 기록용 파일에서 한 번씩만 내려받는다.
-    assert [button.label for button in buttons] == [
-        "PDF 보고서 내려받기", "구성요소 목록 (SBOM JSON)", "실행 기록 (JSONL)",
-    ]
+    assert [button.label for button in buttons] == ["PDF 내보내기"]
     assert buttons[0].proto.type == "primary"
     conclusion = next(line for line in app.markdown if "먼저 확인할 것" in line.value)
-    assert elements.index(conclusion) < elements.index(buttons[0]) < elements.index(app.text_input[2])
-    app.run()
+    assert elements.index(buttons[0]) < elements.index(overview) < elements.index(conclusion)
+    assert elements.index(conclusion) < elements.index(app.text_input(key="finding_query"))
+    open_files_tab(app)
     assert len(calls) == 1
-    assert len(app.get("download_button")) == 3
+    assert [b.label for b in app.get("download_button")] == [
+        "PDF 내보내기", "구성요소 목록 (SBOM JSON)", "실행 기록 (JSONL)",
+    ]
 
 
 def test_missing_backend_shows_error(monkeypatch):
@@ -186,8 +204,8 @@ def test_saved_result_reopens_in_new_session_without_scan(ui, monkeypatch, tmp_p
     monkeypatch.setattr(ui, "load_scan", lambda: None)
     fresh = run_app()
     picker = fresh.selectbox[0]
-    assert picker.options[1:] == [f"테스트 서비스 · {directory.name}", "이전 서비스 · 20000101-000000"]
-    picker.select(directory).run()
+    assert picker.options[1:] == [ui.history_label(directory), "이전 서비스 · 2000-01-01 00:00:00"]
+    assert picker.value == directory
     assert not fresh.exception and not fresh.error
     assert rendered == [(bundle, downloads, failures, command)] * 2
     assert rendered[-1][0] is not bundle
@@ -211,6 +229,93 @@ def test_saved_result_rejects_outside_paths(ui, tmp_path):
     assert not app.get("download_button")
 
 
+def test_overview_and_pdf_follow_selected_result(ui, monkeypatch):
+    from streamlit.delta_generator import DeltaGenerator
+    from triage.output.report_pdf import saved
+
+    bundle = TriageBundle.model_validate_json((SOURCE.parent / "action_bundle.json").read_bytes())
+    directory = ui.save_result("저장 서비스", bundle, {"report": ("old.pdf", b"stored-pdf")}, {}, "")
+    other = ui.save_result("다른 서비스", TriageBundle(), {"report": ("lost.pdf", b"old")}, {}, "")
+    (other / "lost.pdf").unlink()
+    downloads = {}
+    calls = []
+    native = DeltaGenerator.download_button
+
+    def download(self, label, data, file_name, *args, **kwargs):
+        downloads[kwargs["key"]] = file_name, data
+        return native(self, label, data, file_name, *args, **kwargs)
+
+    def render(source, out):
+        calls.append(source)
+        out.write_bytes(source.read_bytes())
+        log = out.with_suffix(".report.jsonl")
+        log.write_text('{"stage":"report"}\n', encoding="utf-8")
+        return log
+
+    monkeypatch.setattr(DeltaGenerator, "download_button", download)
+    monkeypatch.setattr(ui.st, "download_button", download.__get__(ui.st.download_button.__self__))
+    monkeypatch.setattr(saved, "render_saved_report", render)
+    page = run_app()
+    page.selectbox(key="finals_history").select(directory).run()
+    assert page.selectbox(key="finals_history").value == directory
+    totals = overview_counts(page)
+    assert totals == {"처리할 일": "3개", "수정할 일": "1", "확인할 일": "2", "취약점 후보": "7건",
+                      "영향 있음": "1", "확인 필요": "4", "영향 없음": "2"}
+    page.segmented_control[0].set_value("확인 필요").run()
+    assert page.radio(key="queue_desktop").value == page.selectbox(key="queue_mobile").value == 2
+    assert len(page.radio(key="queue_desktop").options) == 2
+    page.selectbox(key="queue_mobile").select(3).run()
+    assert page.radio(key="queue_desktop").value == 3
+    assert overview_counts(page) == totals and not calls
+    assert "export_log" not in downloads
+    open_files_tab(page)
+    assert overview_counts(page) == totals and not calls
+    assert downloads["archived_report"] == ("old.pdf", b"stored-pdf")
+    name, pdf = downloads["finals_top_report"]
+    assert name == "report-저장 서비스.pdf"
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        report = pool.submit(pdf)
+        log = pool.submit(downloads["export_log"][1])
+    assert report.result() == (directory / "bundle.json").read_bytes()
+    assert json.loads(log.result()) == {"stage": "report"}
+    page.run()
+    assert downloads["finals_top_report"][1]() == report.result()
+    assert calls == [directory / "bundle.json"] and (directory / "old.pdf").read_bytes() == b"stored-pdf"
+    page.selectbox(key="finals_history").select(other).run()
+    assert not page.exception and overview_counts(page)["처리할 일"] == "0개"
+    open_files_tab(page)
+    assert not any(b.key == "archived_report" for b in page.get("download_button"))
+    assert downloads["finals_top_report"][0] == "report-다른 서비스.pdf"
+    assert downloads["finals_top_report"][1]() == (other / "bundle.json").read_bytes()
+    assert pdf() == report.result() and calls == [directory / "bundle.json", other / "bundle.json"]
+
+
+def test_pdf_export_retries_live_snapshot_if_first_render_fails(ui, monkeypatch):
+    from triage.output.report_pdf import saved
+
+    bundle = TriageBundle(meta={"label": "현재 서비스"})
+    command = ui.scan_command("현재 서비스", "./source")
+    sides = []
+
+    def render(source, out):
+        assert TriageBundle.model_validate_json(source.read_bytes()) == bundle
+        sidecar = json.loads(source.with_name("meta.json").read_text(encoding="utf-8"))
+        sides.append(sidecar)
+        if len(sides) == 1:
+            raise OSError("임시 출력 실패")
+        out.write_bytes(b"pdf")
+        record = out.with_suffix(".jsonl")
+        record.write_bytes(b"log")
+        return record
+
+    monkeypatch.setattr(saved, "render_saved_report", render)
+    export = ui.ReportExport(None, bundle, command, "changes.patch")
+    with pytest.raises(ValueError, match="다시 시도"):
+        export.pdf()
+    assert export.pdf() == b"pdf" and export.log() == b"log"
+    assert sides == [{"downloads": {"patch": "changes.patch"}, "failures": {}, "command": command}] * 2
+
+
 def test_save_failure_keeps_current_result(ui, monkeypatch, tmp_path):
     ui.WEB_RESULTS.parent.write_bytes(b"unavailable")
     install_backend(monkeypatch, lambda *a, **kw: SimpleNamespace(bundle=TriageBundle(), paths={}, failures={}))
@@ -218,7 +323,8 @@ def test_save_failure_keeps_current_result(ui, monkeypatch, tmp_path):
     submit_server_path(app, tmp_path)
     assert not app.exception
     assert app.warning.values == ["이번 점검 결과를 저장할 수 없습니다."]
-    assert len(app.metric) == 4
+    assert overview_counts(app)["취약점 후보"] == "0건"
+    assert app.get("download_button")[0].label == "PDF 내보내기"
 
 
 def test_partial_failure_keeps_available_downloads(monkeypatch, tmp_path):
@@ -238,7 +344,8 @@ def test_partial_failure_keeps_available_downloads(monkeypatch, tmp_path):
     assert app.warning[0].value == "일부 단계 실패"
     assert any("PDF 보고서 생성 · 글꼴 없음" in item.value for item in app.markdown)
     assert any("PDF 보고서 생성 — 실패" in item.value for item in app.text)
-    assert [button.label for button in app.get("download_button")] == ["실행 기록 (JSONL)"]
+    open_files_tab(app)
+    assert [button.label for button in app.get("download_button")] == ["PDF 내보내기", "보고서 재생성 기록", "실행 기록 (JSONL)"]
 
 
 def test_pipeline_exception_only_displays_type_and_stage(monkeypatch, tmp_path):
@@ -267,7 +374,8 @@ def test_real_offline_scan_fills_expected_downloads(monkeypatch):
     submit_server_path(app, SOURCE, offline=True)
     assert not app.exception
     assert not app.error
-    assert len(app.get("download_button")) == 4  # 변경안·PDF(지금 할 일) + SBOM·실행 기록(기록용 파일)
+    open_files_tab(app)
+    assert len(app.get("download_button")) == 3  # 빈 변경안은 적용을 안내하지 않는다.
     _, downloads, failures = app.session_state["finals_result"]
     assert not failures
     assert downloads["patch"][0].endswith(".patch")
@@ -306,22 +414,22 @@ def test_action_cards_search_details_and_threaded_progress(ui, monkeypatch, tmp_
     submit_server_path(app, tmp_path)
     assert not app.exception and not app.error
     assert ui_threads and scan_threads[0] not in ui_threads
-    assert [(m.label, m.value) for m in app.metric] == [
-        ("오늘 할 일", "3"), ("영향 있음", "1"), ("확인 필요", "4"), ("영향 없음", "2"),
-    ]
-    assert any("먼저 고칠 것" in value for value in app.markdown.values)
+    assert overview_counts(app) == {"처리할 일": "3개", "수정할 일": "1", "확인할 일": "2", "취약점 후보": "7건",
+                                    "영향 있음": "1", "확인 필요": "4", "영향 없음": "2"}
+    assert any("수정 버전을 먼저 확인하세요" in title for title in app.subheader.values)
     cards = [x for x in app.expander if "관련 취약점" in x.label]
-    # 한눈에 보이도록 1순위 카드만 펼치고 나머지는 조치 보드에서 고른다.
-    assert len(cards) == 3 and [x.proto.expanded for x in cards] == [True, False, False]
+    assert len(cards) == 1 and len(app.radio(key="queue_desktop").options) == 3
     assert any(r"근거로 쓰지 않았습니다 · container/Dockerfile\:2" in w.value for w in app.warning)
-    assert any("triage scan" in x.value and str(tmp_path) in x.value for x in app.code)
+    open_files_tab(app)
+    assert any("triage scan" in x.value and ui.scan_command("테스트 서비스", str(tmp_path)) == x.value for x in app.code)
     hit = next(f for f in bundle.findings if f.vulnerability.aliases)
-    app.text_input[2].set_value(hit.vulnerability.aliases[0].lower()).run()
+    app.text_input(key="finding_query").set_value(hit.vulnerability.aliases[0].lower()).run()
     assert not app.exception
     assert "검색 결과 1건" in app.subheader.values
     assert any(f"{ui.md_escape(hit.vulnerability.id)} · 판단 유보" in x.value for x in app.markdown)
-    assert any("(#action-1)" in x.value for x in app.markdown)
-    app.text_input[2].set_value(hit.component.name).run()
+    app.button(key=f"hit_{hit.key}").click().run()
+    assert app.session_state["active_action"] == 1 and app.session_state["result_view"] == ui.RESULT_VIEWS[0]
+    app.text_input(key="finding_query").set_value(hit.component.name).run()
     assert "검색 결과 5건" in app.subheader.values
     assert any("별도 할 일 없음" in x.value for x in app.caption)
     app.session_state["details_1"] = True
@@ -365,46 +473,39 @@ def test_action_card_fix_metadata(ui, monkeypatch, tmp_path, status):
     submit_server_path(app, tmp_path)
     assert not app.exception
     cards = [x for x in app.expander if "관련 취약점" in x.label]
-    for card, action, kind in zip(cards, (upgrade, image, confirm), ("업그레이드", "기본 이미지", "확인 필요"), strict=True):
-        assert kind in card.label and " → " in card.label
-        assert ui.md_escape(action.target or "영향 확인 후 결정") in card.label
-        assert any("triage scan" in code.value for code in card.code)
-    assert ui.md_escape(top.component.version) in cards[0].label
+    assert len(cards) == 1 and app.radio(key="queue_desktop").value == 1
+    open_files_tab(app)
     buttons = {button.key: button for button in app.get("download_button")}
-    assert len(buttons) == (2 if status else 1)
-    if status:
-        assert buttons["finals_top_patch"].proto.type == "primary"
-    # 확인 필요 항목의 업무 요청서는 받는 팀별로 한 파일에 묶어 내려받는다.
-    text = ui.work_requests_text("svc", [upgrade, image, confirm])
+    assert set(buttons) == {"finals_top_report", "export_log", "finals_requests"} | ({"finals_top_patch"} if status else set())
     for action in (upgrade, image, confirm):
         if action.work_request:
-            assert f"## {action.team or '담당 팀 미정'}" in text and action.work_request.title in text
-    assert "지금 할 일" in app.subheader.values
-    assert any("다시 점검" in value for value in app.markdown.values)
-    assert any("git apply" in value for value in app.markdown.values) == bool(status)
+            assert action.work_request.title in ui.work_requests_text("svc", [upgrade, image, confirm])
+    assert any(code.value.startswith("git apply ") for code in app.code) == bool(status)
     assert any(code.value.startswith("uv run triage scan") and code.value.endswith("out/recheck")
                for code in app.code)
-    if status is None:
-        assert f"1. {ui.md_escape(old_step)}" in cards[0].markdown.values
-        assert not any(code.proto.language == "diff" for code in app.code)
-        assert not any("전체 변경안 재점검" in value for value in app.markdown.values)
-        return
-
-    assert app.session_state["finals_result"][1]["patch"][1] == after.encode("utf-8")
-    diffs = [code for code in cards[0].code if code.proto.language == "diff"]
-    assert [code.value for code in diffs] == [f"-{source.snippet}\n+{after}"]
-    assert f"{ui.md_escape(source.file)}:{source.line_start}" in cards[0].caption.values
-    assert not any(code.proto.language == "diff" for card in cards[1:] for code in card.code)
-    assert f"수동 확인 · {ui.md_escape(manual)}" in cards[2].markdown.values
-    assert not any(ui.md_escape(manual) in value for card in cards[:2] for value in card.markdown.values)
-    if status == "ok":
-        assert (f"변경안 적용 시 이 항목 {len(upgrade.findings)}건 중 해소 **1건** · "
-                f"남음 **{len(upgrade.findings) - 1}건**") in cards[0].markdown.values
-    for card in cards:
+    if status:
+        assert app.session_state["finals_result"][1]["patch"][1] == after.encode("utf-8")
+        assert ui.md_escape(f"{source.file} {source.line_start}행을 수정하세요") in app.subheader.values
+        assert after in app.code.values
+        assert any(source.snippet in html.value for html in app.html)
         if status == "ok":
-            assert any(value.startswith("변경안 적용 시 이 항목 ") for value in card.markdown.values)
+            assert any(f"{len(upgrade.findings)}건 중 해소 1건" in value for value in app.caption.values)
         else:
-            assert ui.md_escape(unavailable) in card.caption.values
+            assert ui.md_escape(unavailable) in app.caption.values
+    else:
+        assert ui.md_escape(old_step) in app.markdown.values
+        assert not any("**바꿀 줄**" in text for text in app.markdown.values)
+    app.radio(key="queue_desktop").set_value(2).run()
+    assert app.selectbox(key="queue_mobile").value == 2
+    assert f"{ui.md_escape(image.team)}에 확인을 요청하세요" in app.subheader.values
+    assert not any("**바꿀 줄**" in text for text in app.markdown.values)
+    app.selectbox(key="queue_mobile").select(3).run()
+    assert app.radio(key="queue_desktop").value == 3
+    assert any(ui.md_escape(confirm.missing_info[0].what) in text for text in app.markdown.values)
+    if status:
+        app.session_state["details_3"] = True
+        app.run()
+        assert "수정 시 확인할 내용 · " + ui.md_escape(manual) in app.caption.values
 
 
 def test_pending_findings_point_to_first_confirmation(ui, monkeypatch, tmp_path):
@@ -414,9 +515,77 @@ def test_pending_findings_point_to_first_confirmation(ui, monkeypatch, tmp_path)
     app = run_app()
     submit_server_path(app, tmp_path)
     assert not app.exception
-    assert app.metric[1].value == "0"
+    assert overview_counts(app)["영향 있음"] == overview_counts(app)["수정할 일"] == "0"
     first = build_actions(bundle)[0]
-    assert any("먼저 확인할 것" in line and ui.md_escape(first.component) in line for line in app.markdown.values)
+    assert f"{ui.md_escape(first.team)}에 확인을 요청하세요" in app.subheader.values
+    assert any(first.work_request.body in code.value for code in app.code)
+    assert not any("바꿀 줄" in line for line in app.markdown.values)
+
+
+def test_unconfirmed_item_shows_question_even_when_bundle_contains_patch(ui):
+    bundle = TriageBundle.model_validate_json((SOURCE.parent / "action_bundle.json").read_bytes())
+    action = build_actions(bundle)[-1]
+    bundle.findings = [f for f in bundle.findings if f.key in action.findings]
+    bundle.meta["fix_plan"] = [dict(kind="change", findings=action.findings, file="dependency.txt", line=4,
+                                    before="dependency==1", after="dependency==2")]
+    ui.save_result("확인용", bundle, {"patch": ("all.patch", b"patch")}, {}, "")
+    app = run_app()
+    assert not app.exception
+    assert not any(code.value == "dependency==2" for code in app.code)
+    assert action.work_request.body in next(code.value for code in app.code if "담당자님" in code.value)
+    assert any(action.missing_info[0].where in text for text in app.markdown.values)
+    open_files_tab(app)
+    assert any(b.key == "finals_top_patch" and b.label.startswith("전체 변경안") for b in app.get("download_button"))
+
+
+def test_switching_service_and_new_scan_resets_selection(ui):
+    bundle = TriageBundle.model_validate_json((SOURCE.parent / "action_bundle.json").read_bytes())
+    first = ui.save_result("첫 서비스", bundle, {}, {}, "")
+    other = ui.save_result("둘째 서비스", bundle, {}, {}, "")
+    app = run_app()
+    current = app.selectbox(key="finals_history").value
+    app.radio(key="queue_desktop").set_value(3).run()
+    assert app.session_state["active_action"] == 3
+    app.selectbox(key="finals_history").select(other if current == first else first).run()
+    assert app.radio(key="queue_desktop").value == app.selectbox(key="queue_mobile").value == 1
+    app.button(key="new_scan").click().run()
+    assert not app.exception and app.selectbox(key="finals_history").value is None
+    assert any(t.label == "서비스 이름" for t in app.text_input)
+    assert all(r.key != "queue_desktop" for r in app.radio)
+
+
+def test_open_result_disappears_from_history(ui, monkeypatch):
+    bundle = TriageBundle.model_validate_json((SOURCE.parent / "action_bundle.json").read_bytes())
+    selected = ui.save_result("선택한 서비스", bundle, {}, {}, "")
+    remaining = ui.save_result("남은 서비스", TriageBundle(), {}, {}, "")
+    history = [selected, remaining]
+    monkeypatch.setattr(ui, "saved_results", lambda: history)
+    app = run_app()
+    assert app.selectbox(key="finals_history").value == selected
+    assert overview_counts(app)["취약점 후보"] == "7건"
+    history.remove(selected)
+    app.run()
+    assert not app.exception and app.selectbox(key="finals_history").value == remaining
+    assert overview_counts(app)["취약점 후보"] == "0건"
+    assert app.session_state["report_export"].directory == remaining
+    history.clear()
+    app.run()
+    assert not app.exception and app.selectbox(key="finals_history").value is None
+    assert not app.get("download_button") and any(t.label == "서비스 이름" for t in app.text_input)
+
+
+@pytest.mark.parametrize("only_unaffected", [True, False])
+def test_empty_queue_has_an_explicit_outcome(ui, only_unaffected):
+    bundle = TriageBundle.model_validate_json((SOURCE.parent / "action_bundle.json").read_bytes())
+    bundle.findings = [f for f in bundle.findings if only_unaffected and f.verdict.state == "not_affected"]
+    ui.save_result("빈 목록", bundle, {}, {}, "")
+    app = run_app()
+    assert not app.exception and "현재 수정할 항목이 없습니다" in app.subheader.values
+    assert overview_counts(app) == {"처리할 일": "0개", "수정할 일": "0", "확인할 일": "0",
+                                    "취약점 후보": f"{len(bundle.findings)}건", "영향 있음": "0", "확인 필요": "0",
+                                    "영향 없음": str(len(bundle.findings))}
+    assert all(r.key != "queue_desktop" for r in app.radio)
+    assert any(("모든 후보가 영향 없음" if only_unaffected else "취약점 후보가 없어") in s for s in app.markdown.values)
 
 
 def test_md_escape_preserves_each_special_character(ui):
@@ -435,19 +604,18 @@ def test_external_verdict_markdown_in_cards_search_and_details(monkeypatch, tmp_
     app = run_app()
     submit_server_path(app, tmp_path)
     assert not app.exception
-    card = next(card for card in app.expander if "관련 취약점" in card.label)
-    assert escaped in card.markdown.values
+    assert escaped in app.markdown.values
     unaffected = next(card for card in app.expander if card.label.startswith("영향 없음"))
     assert any(line.endswith(escaped) for line in unaffected.markdown.values)
 
     top = build_actions(bundle)[0].top_finding
     identifier = next(f.vulnerability.id for f in bundle.findings if f.key == top)
-    app.text_input[2].set_value(identifier).run()
+    app.text_input(key="finding_query").set_value(identifier).run()
     assert f"근거 · {escaped}" in app.markdown.values
-    assert "[할 일 1로 이동](#action-1)" in app.markdown.values
+    assert app.button(key=f"hit_{top}").label == "조치 1 열기"
     app.session_state["details_1"] = True
     app.run()
     assert not app.exception
-    detail = next(card for card in app.expander if card.label.startswith("포함된 취약점"))
+    detail = next(card for card in app.expander if card.label.startswith("판정 근거와 관련 취약점"))
     assert escaped in detail.markdown.values
     assert f"근거 · {escaped}" in detail.markdown.values

@@ -288,9 +288,15 @@ def run_scan(
         report_path = out_dir / f"report-{label}.pdf"
         if lookup_misses:
             bundle.meta["limitations"] = [f"취약점 조회에서 응답이나 캐시를 확보하지 못한 요청이 {lookup_misses}건 있습니다."]
-        bundle.meta["incomplete_coverage"] = bool(lookup_misses or {"collect", "lookup"}.intersection(failures))
+        bundle.meta["incomplete_coverage"] = bool(lookup_misses or lookup_truncated or {"collect", "lookup"}.intersection(failures))
+        report_meta = {**meta, "scan_source": source_arg, "scan_offline": offline,
+                       "patch_name": paths["patch"].name if "patch" in paths and patch else ""}
+        bundle.meta["report_meta"] = report_meta
+        with step("bundle"):
+            snapshot = out_dir / f"bundle-{label}.json"
+            write_artifact(snapshot, bundle.model_dump_json().encode("utf-8"))
+            paths["bundle"] = snapshot
         with step("pdf"):
-            report_meta = {**meta, "scan_source": source_arg, "scan_offline": offline}
             bundle.evidence.extend(render_pdf(bundle, report_meta, report_path, log=log))
             paths["report"] = report_path
         completed = True

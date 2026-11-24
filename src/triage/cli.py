@@ -224,6 +224,23 @@ def scan(
 
 
 @app.command()
+def report(
+    bundle_path: Path = typer.Argument(..., exists=True, dir_okay=False, help="저장된 점검 묶음 JSON"),
+    out: Path = typer.Argument(..., help="다시 그릴 PDF 경로"),
+) -> None:
+    """저장된 판정과 근거로 PDF를 다시 만들고 보고서 실행 로그를 남긴다."""
+    from .output.report_pdf.saved import render_saved_report
+
+    try:
+        log_path = render_saved_report(bundle_path, out)
+    except (OSError, ValueError) as error:
+        typer.secho(f"보고서 생성 실패 ({type(error).__name__})", err=True, fg=typer.colors.RED)
+        raise typer.Exit(1) from error
+    typer.echo(out)
+    typer.echo(log_path)
+
+
+@app.command()
 def run(
     inputs: list[str] = typer.Argument(..., help="입력 파일·폴더. 자산 직접 지정은 '경로=자산ID'"),
     out_dir: Path = typer.Option(Path("out"), "-o", "--out-dir"),
