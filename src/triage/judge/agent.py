@@ -109,7 +109,6 @@ class _Run:
 
     def judge(self, f: Finding) -> tuple[Verdict, Workspace, list[Anomaly]]:
         ws = Workspace(self.root, self.files, self.base, self.settings, self.log, subject=f.key)
-        ws.checklist = None
         try:
             verdict, extra = self._judge(f, ws)
         except Exception as e:  # 한 건의 예기치 못한 오류가 전체 실행을 멈추지 않게 한다
@@ -117,12 +116,19 @@ class _Run:
             verdict, extra = unavailable(f, f"판정 중 오류({type(e).__name__})", ws.checklist), []
         if not verdict.decided_at:
             verdict.decided_at = now()
+        # 강등·검증 꺼짐 판정에도 없는 근거 ID가 보고서로 새지 않게 한다
+        dropped = 0
+        for r in verdict.item_results:
+            keep = [e for e in r.evidence_ids if ws.exists(e)]
+            dropped += len(r.evidence_ids) - len(keep)
+            r.evidence_ids = keep
+        if dropped:
+            verdict.verifier_notes.append(f"존재하지 않는 근거 ID {dropped}개를 판정 기록에서 제거")
         # 6) 설명: 판정이 끝난 뒤 붙이는 표현 단계(판정 결과를 바꾸지 않는다)
         verdict.plain_ko = explain.plain_sentence(f, verdict, self.settings)
         if verdict.state == "undetermined" and verdict.work_request is None:
-            client = self.client if verdict.decided_by != "fallback" or ws.checklist else None
             try:
-                verdict.work_request = explain.work_request(f, verdict, ws.checklist, client, self.log)
+                verdict.work_request = explain.work_request(f, verdict, ws.checklist, self.client, self.log)
             except Exception as e:  # 요청서 문구 실패는 템플릿으로 대체
                 self.emit("explain.error", subject=f.key, error=type(e).__name__)
                 verdict.work_request = explain.template_request(f, verdict, explain.team_for(verdict, ws.checklist))

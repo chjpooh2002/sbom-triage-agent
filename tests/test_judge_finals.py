@@ -298,8 +298,9 @@ def test_two_violations_demote_to_undetermined(tmp_path):
     out, _, _ = run(tmp_path, Fake([bad, bad]), escalate=False)
     v = out[0].verdict
     assert (v.state, v.decided_by) == ("undetermined", "fallback")
-    assert any("evidence_not_found" in n for n in v.verifier_notes) and "강등" in v.verifier_notes[-1]
+    assert any("evidence_not_found" in n for n in v.verifier_notes) and any("강등" in n for n in v.verifier_notes)
     assert v.missing_info and v.work_request and v.work_request.to_team
+    assert "search-9999" not in {e for r in v.item_results for e in r.evidence_ids}   # 없는 ID는 기록에서 제거
 
 
 def test_refusal_becomes_undetermined(tmp_path):
@@ -319,7 +320,9 @@ def test_judge_switch_off_is_version_baseline(tmp_path):
 def test_verify_switch_off_accepts_unchecked_output(tmp_path):
     bad = lambda m: verdict(items=[item("calls_parse", "met", ("search-9999", CALL))])
     out, _, _ = run(tmp_path, Fake([bad]), verify=False)
-    assert out[0].verdict.state == "affected" and "검증 단계 꺼짐" in out[0].verdict.verifier_notes[-1]
+    notes = out[0].verdict.verifier_notes
+    assert out[0].verdict.state == "affected" and any("검증 단계 꺼짐" in n for n in notes)
+    assert any("존재하지 않는 근거 ID 1개" in n for n in notes)
 
 
 def test_escalate_only_when_undetermined_with_evidence(tmp_path):

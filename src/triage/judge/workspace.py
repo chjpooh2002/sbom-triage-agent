@@ -43,6 +43,13 @@ class Workspace:
         self.new.append(item)
         return item.id
 
+    def exists(self, eid: str) -> bool:
+        try:
+            self.store.get(eid)
+        except KeyError:
+            return False
+        return True
+
     def deployed(self, path: str) -> str:
         s = self.scope.get(path)
         return s.deployed if s else "unknown"
