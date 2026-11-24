@@ -1,26 +1,26 @@
 """근거와 조치 계획을 한국어 PDF로 내보낸다."""
-import os
 import re
-import shlex
 import unicodedata
 from collections import Counter, defaultdict
 from collections.abc import Callable, Iterable
-from pathlib import Path, PurePosixPath
+from datetime import datetime, timedelta, timezone
+from pathlib import Path, PurePosixPath, PureWindowsPath
 from urllib.parse import urlsplit
 
 from jinja2 import Environment
 
+from triage import action_view
 from triage.models import Evidence, Finding, TriageBundle
 
 from .._common import (
-    artifact_evidence, file_location, finding_state, public_url, write_artifact,
+    artifact_evidence, file_location, finding_evidence, finding_state, public_url, write_artifact,
 )
 from .._redact import Redactor
 from ._engines import render_with_engine
 
 
 _DIRECTORY = Path(__file__).parent
-_STATES = {"affected": "영향 있음", "not_affected": "영향 없음", "undetermined": "판단 유보"}
+_STATES = {"affected": "영향 있음", "undetermined": "판단 유보", "not_affected": "영향 없음"}
 _DEPLOYMENT = {"yes": "배포됨", "no": "배포되지 않음", "unknown": "확인되지 않음"}
 _CONDITIONS = {"met": "충족", "not_met": "미충족", "unknown": "확인되지 않음", "assumed": "전제"}
 _FILE_SCOPE = {"yes": "배포됨", "no": "미배포", "unknown": "배포 미확인"}
@@ -32,68 +32,24 @@ _LOOKUP_NAMES = {
 }
 
 
-def _evidence_details(ids: Iterable[str], by_id: dict[str, Evidence]) -> list[dict]:
-    return [
-        {
-            "id": item.id,
-            "location": file_location(item),
-            "has_line": item.line_start is not None,
-            "url": item.url,
-            "snippet": "\n".join(item.snippet.splitlines()[:2]),
-        }
-        for item_id in dict.fromkeys(ids)
-        if (item := by_id.get(item_id)) is not None
-    ]
+# A4 인쇄용 표시 한도. 원문과 초과 항목은 부록에 둔다.
+LIMIT = dict(board=8, cards=3, plans=10, teams=3, ranges=3, snippet_lines=3,
+             summary_chars=100, team_lines=10, team_columns=92, command_columns=160,
+             board_component=31, board_location=32, board_team=22, plan_text=85, citation_ids=8,
+             badge=24, range=26, id=34, label=48, location=64, condition=80, line=90,
+             sentence=120, risk=165, question=185, branches=3)
+_FILE_TYPES = {"app": "앱", "legacy": "이전 코드", "test": "테스트", "config": "설정",
+               "script": "스크립트", "generated": "생성 파일", "vendored_bundle": "번들", "other": "기타"}
 
 
-def _appendix_citations(ids: Iterable[str], by_id: dict[str, Evidence]) -> list[dict]:
-    citations = {}
-    for item in _evidence_details(ids, by_id):
-        url = public_url(item["url"])
-        location = item["location"] if item["has_line"] or not url else ""
-        citation = citations.setdefault((location, url), {
-            "location": location, "has_line": item["has_line"], "url": url, "ids": [],
-        })
-        citation["ids"].append(item["id"])
-    return list(citations.values())
-
-
-def _folders(bundle: TriageBundle, by_id: dict[str, Evidence]) -> list[dict]:
+def _folders(bundle: TriageBundle) -> list[dict]:
     folders = defaultdict(list)
     for file in sorted(bundle.files, key=lambda item: item.path):
         path = PurePosixPath(file.path.replace("\\", "/"))
-        folders[path.parent.as_posix()].append((path.name, file))
-    result = []
-    for folder, files in sorted(folders.items()):
-        states = Counter()
-        reasons = defaultdict(Counter)
-        refs = Counter()
-        entries = defaultdict(list)
-        for name, file in files:
-            state = file.deployed if file.deployed in _FILE_SCOPE else "unknown"
-            reason = file.reason or "분류 사유 미기록"
-            states[state] += 1
-            reasons[state][reason] += 1
-            refs.update(dict.fromkeys(file.evidence_ids).keys())
-            entries[(state, file.category or "other", reason)].append(name)
-        representatives = (
-            ref for ref, _ in refs.most_common()
-            if ref in by_id and (by_id[ref].file or by_id[ref].url)
-        )
-        result.append({
-            "path": folder, "counts": states,
-            "reasons": [
-                {"state": _FILE_SCOPE[state], "text": reasons[state].most_common(1)[0][0],
-                 "others": len(reasons[state]) - 1}
-                for state in _FILE_SCOPE if state in reasons
-            ],
-            "evidence": _evidence_details(representatives, by_id)[:2],
-            "entries": [
-                {"state": _FILE_SCOPE[state], "category": category, "reason": reason, "names": names}
-                for (state, category, reason), names in sorted(entries.items())
-            ],
-        })
-    return result
+        folders[path.parent.as_posix()].append({"name": path.name, "deployed": file.deployed,
+                                                "category": file.category, "evidence_ids": file.evidence_ids})
+    return [{"path": path, "files": files, "counts": Counter(f["deployed"] for f in files)}
+            for path, files in folders.items()]
 
 
 def _lookup_sources(bundle: TriageBundle, meta: dict) -> list[dict]:
@@ -165,6 +121,16 @@ def _text_width(text: str) -> int:
     return sum(2 if unicodedata.east_asian_width(char) in {"W", "F"} else 1 for char in text)
 
 
+def _local_time(value: str) -> str:
+    try:
+        instant = datetime.fromisoformat(value)
+    except ValueError:
+        return value
+    if instant.tzinfo is None:
+        return instant.strftime("%Y-%m-%d %H:%M")
+    return instant.astimezone(timezone(timedelta(hours=9))).strftime("%Y-%m-%d %H:%M (한국 시각)")
+
+
 def _summary_text(text: str, columns: int, *, tail: bool = False) -> str:
     text = " ".join(text.split())
     if _text_width(text) <= columns:
@@ -180,207 +146,201 @@ def _summary_text(text: str, columns: int, *, tail: bool = False) -> str:
     return "…" + "".join(reversed(chars)) if tail else "".join(chars).rstrip() + "…"
 
 
-def _detail_groups(findings: list[dict], state: str) -> list[dict]:
-    details = {}
-    for item in findings:
-        verdict = item["verdict"]
-        conditions = verdict.get("item_results", [])
-        key = (
-            item["component"]["id"], item["asset"], item["reason"],
-            tuple(sorted(item["body_ids"])),
-            tuple((condition["item_key"], condition["status"], condition["reason"]) for condition in conditions),
-        )
-        if key not in details:
-            details[key] = {**item, "identifiers": [], "missing_info": {}, "members": []}
-        detail = details[key]
-        detail["identifiers"].append(item["vulnerability"]["id"])
-        detail["members"].append(item)
-        for missing in verdict.get("missing_info", []):
-            detail["missing_info"].setdefault((missing["what"], missing["where"]), missing)
-
-    for detail in details.values():
-        members = detail.pop("members")
-        detail["identifiers"] = list(dict.fromkeys(detail["identifiers"]))
-        detail["links"] = _references(url for item in members for url in item["links"])[:2]
-        for item in members:
-            item["shown_links"].update(detail["links"])
-        missing_info = list(detail["missing_info"].values())
-        if state == "undetermined":
-            fallback = {
-                "what": "공개 권고문의 영향 조건에 해당하는 기능의 실제 사용과 배포 여부",
-                "where": detail["location"] or "배포 설정, 애플리케이션 호출 코드, 대표 권고문",
-            }
-            missing_info = [
-                {field: item[field] or value for field, value in fallback.items()}
-                for item in missing_info or [fallback]
-            ]
-        detail["missing_info"] = missing_info
-    return list(details.values())
-
-
 def _scan_command(meta: dict) -> str:
-    label = meta.get("label") or "재점검"
-    source = meta.get("scan_source") or "<점검할 소스 경로>"
-    args = ["uv", "run", "triage", "scan"]
-    if meta.get("scan_offline"):
-        args.append("--offline")
-    args.extend(["--", label, source, "out/recheck"])
-    if os.name == "nt":
-        # Windows 보고서의 실행 환경은 PowerShell이다.
-        return " ".join(arg if re.fullmatch(r"[\w./-]+", arg) else
-                        "'" + re.sub("[‘’‚‛']", lambda m: m[0] * 2, arg) + "'" for arg in args)
-    return shlex.join(args)
+    return action_view.scan_command(meta.get("label") or "재점검", meta.get("scan_source") or "",
+                                    bool(meta.get("scan_offline")))
 
 
-def _check_summary(check: dict) -> str:
-    if not check:
-        return "재점검 전"
-    if check.get("status") != "ok":
-        return check.get("reason") or "재점검 결과 미확인"
-    counts = []
-    for key, label in (("resolved", "해소"), ("remaining", "남음"), ("new", "새로 생김")):
-        value = check.get(key)
-        count = len(value) if isinstance(value, list) else value
-        counts.append(f"{label} {count}건" if isinstance(count, int) else f"{label} 미기록")
-    return "전체 후보 · " + " · ".join(counts)
+def _risk(finding: Finding) -> str:
+    verdict = finding.verdict
+    for text in filter(None, [verdict.plain_ko, verdict.rationale_ko, finding.status_note]):
+        # 위험 설명과 지시가 한 문장이면 원문에서 결과에 해당하는 절만 남긴다.
+        clause = re.search(r"(.*?)(?:있으므로|있으니|있어서|있어[, ])", text)
+        if clause and "수 " in clause[1]:
+            return clause[1].rstrip() + " 있습니다."
+        sentences = re.split(r"(?<=[.!?])\s+", text)
+        factual = [part for part in sentences if not re.search(
+            r"(?:하세요|십시오|합니다만|해야 합니다|바랍니다|권장합니다|권고합니다|해 주세요)[.!?]?$", part)]
+        if factual:
+            return " ".join(factual[:2])
+    return "이 버전에서 권고문의 영향 조건이 충족된 것으로 판정했습니다."
 
 
-def _action_cards(bundle: TriageBundle, priorities, by_id, decisions, fix_plan) -> list[dict]:
-    # actions도 출력 공통 판정 함수를 사용하므로 PDF 렌더링 시점에 불러온다.
-    from triage.actions import build_actions
+def _decision(finding, by_id):
+    verdict = finding.verdict
+    state = finding_state(finding)
+    conditions = verdict.item_results if verdict else []
+    ids = list(dict.fromkeys([r for item in conditions for r in item.evidence_ids] + finding_evidence(finding)))
+    evidence = [by_id[r] for r in ids if r in by_id]
+    locations = [e for e in evidence if e.file and e.line_start is not None]
+    if verdict and verdict.decided_by == "rule:not_deployed":
+        locations.sort(key=lambda e: not e.id.startswith("scope-"))
+    elif state == "affected":
+        # 같은 판정이 인용한 근거 중 호출·설정을 좁은 줄 범위로 특정한 곳을 우선한다.
+        locations.sort(key=lambda e: (not e.snippet, e.kind not in {"code", "config"},
+                                      (e.line_end or e.line_start) - e.line_start))
+    source = next(iter(locations), None)
+    links = _references([*finding.vulnerability.references, *(e.url for e in evidence if e.url)])
+    missing = verdict.missing_info if verdict else []
+    unknown = next((i.reason for i in conditions if i.status == "unknown" and i.reason), "")
+    reason = _reason(finding, state)
+    # 사유에 들어간 인용 괄호는 색인과 중복된다. 설치 조건이나 일반 괄호 설명은 유지한다.
+    def citation(match):
+        references = re.split(r"[,;\s]+", match[1].strip())
+        return "" if all(ref in by_id for ref in references) else match[0]
 
-    findings = {f.key: f for f in bundle.findings}
-    plans = {r.finding_key: r for r in bundle.remediations}
-    edits_by_finding = defaultdict(list)
-    for index, edit in enumerate(fix_plan):
-        if edit.get("kind") in {"change", "manual"}:
-            for key in edit["findings"]:
-                edits_by_finding[key].append(index)
-    cards = []
-    for action in build_actions(bundle):
-        priority = priorities.get(action.top_finding)
-        members = [findings[key] for key in action.findings]
-        matching = [plans[f.key] for f in members if f.key in plans
-                    and (plans[f.key].target_version or "") == action.target]
-        representative = next((f for f in members if finding_state(f) == "affected"), members[0])
-        decision = decisions[representative.key]
-        reason = decision["summary_reason"]
-        verdict = representative.verdict
-        if verdict and verdict.decided_by == "fallback" and verdict.verifier_notes:
-            reason = _compact(verdict.verifier_notes[0].partition("(")[0], 52)
-        indices = sorted({i for key in action.findings for i in edits_by_finding.get(key, ())})
-        edits = [fix_plan[i] for i in indices]
-        component = action.component
-        if edits:
-            component = next((f.component.display for f in members
-                              if f.component.id == edits[0]["component"]), component)
-        cards.append({
-            "title": action.title, "kind": action.kind, "target": action.target,
-            "component": component,
-            "state": _STATES[decision["state"]], "reason": reason,
-            "location": decision["location"], "edits": edits,
-            "counts": action.counts,
-            "verified": bool(matching) and all(r.verified for r in matching),
-            "identifiers": list(dict.fromkeys(f.vulnerability.id for f in members)),
-            "tier": priority.tier.value if priority else "", "due": priority.due_date if priority else "",
-            "evidence": _evidence_details(action.evidence_ids, by_id),
-            "missing_info": [m.model_dump() for m in action.missing_info],
-            "steps": list(dict.fromkeys(step for r in matching for step in r.steps)),
-            "workarounds": list(dict.fromkeys(r.workaround for r in matching if r.workaround)),
-            "verify_notes": list(dict.fromkeys(note for r in matching for note in r.verify_notes)),
-        })
-    return cards
+    summary = re.sub(r"\s*[\[(]([^()\[\]]+)[\])]", citation, reason)
+    c = finding.component
+    return {
+        "id": finding.vulnerability.id, "component": c.display, "version": c.version,
+        "deployment": _DEPLOYMENT.get(c.deployed, _DEPLOYMENT["unknown"]), "state": state,
+        "reason": reason, "summary": summary, "ranges": finding.vulnerability.affected_ranges,
+        "in_range": finding.version_in_range,
+        "location": file_location(source) if source else "", "source_ref": source.id if source else next(iter(ids), ""),
+        "snippet": source.snippet if source else "", "link": next(iter(links), ""),
+        "refs": ids, "conditions": [i.model_dump() for i in conditions],
+        "condition": unknown or reason,
+        "what": " / ".join(dict.fromkeys(m.what for m in missing if m.what)) or "기능의 실제 사용 및 운영 환경의 설정",
+        "where": " / ".join(dict.fromkeys(m.where for m in missing if m.where))
+                 or (file_location(source) if source else "배포 설정과 호출 코드"),
+    }
+
+
+def _action_plan(action, members, matching_edits, plans, decisions):
+    affected = [f for f in members if finding_state(f) == "affected"]
+    lead = affected[0] if affected else members[0]
+    matching = [plans[f.key] for f in members if f.key in plans and plans[f.key].target_version == action.target]
+    steps = list(dict.fromkeys(s for p in matching for s in p.steps))
+    edit = next((e for e in matching_edits if e.get("kind") == "change"), None)
+    manual = next((e.get("reason") for e in matching_edits if e.get("kind") == "manual"), None)
+    verified = bool(matching) and all(p.verified for p in matching)
+    target = action.target or "확인 후 결정"
+    target_label = ("목표 버전 " + target if verified else "목표 버전 후보 " + target + " (확인 필요)") if action.target else target
+    if action.kind == "confirm":
+        method = manual or "담당 부서에 영향 조건을 확인합니다."
+        verify = "회신을 근거로 영향 여부를 재판정합니다."
+    elif action.kind == "base_image":
+        method = manual or "배포 이미지의 태그와 다이제스트를 확인하고 교체합니다."
+        verify = "빌드한 이미지의 런타임 버전과 서비스 기동을 확인합니다."
+    else:
+        method = manual or next(iter(steps), "의존성 선언과 잠금 파일을 갱신합니다.")
+        verify = "설치 버전을 대조하고 변경 경로의 회귀 테스트를 실행합니다."
+    if edit and action.kind != "confirm":
+        method = f"{edit['file']}:{edit['line']} 선언 변경"
+    return {
+        "component": action.component, "affected": bool(affected), "target": target, "target_label": target_label,
+        "ids": [f.vulnerability.id for f in affected], "lead": decisions[lead.key],
+        "risk": _risk(lead) if affected else "", "edits": matching_edits, "edit": edit,
+        "method": method, "verify": verify, "steps": steps,
+    }
+
+
+def _citations(used, by_id):
+    # 같은 실제 위치나 권고문은 한 번만 출력하되 원래 근거 ID를 모두 보존한다.
+    groups = defaultdict(list)
+    for ref in sorted(used):
+        item = by_id.get(ref)
+        url = public_url(item.url) if item else ""
+        location = file_location(item) if item and (item.line_start is not None or not url) else ""
+        groups[(location, url)].append(ref)
+    entries, numbers = [], {}
+    for (loc, url), ids in sorted(groups.items()):
+        width = LIMIT["citation_ids"] if loc or url else len(ids)
+        for start in range(0, len(ids), width):
+            refs = ids[start:start + width]
+            number = len(numbers) + 1
+            entries.append({"n": number, "location": loc, "url": url, "ids": refs, "unlocated": not (loc or url)})
+            numbers.update((ref, i) for i, ref in enumerate(refs, number))
+    return entries, numbers
+
+
+def _mail_views(label, actions):
+    mails = []
+    for team, items in action_view.team_requests(actions).items():
+        draft = action_view.team_draft(label, team, items)
+        lines = draft.splitlines()
+        height = sum(max(1, (_text_width(line) + LIMIT["team_columns"] - 1) // LIMIT["team_columns"])
+                     for line in lines)
+        req = items[0][1].work_request
+        question = next((line for line in re.split(r"(?:^|\s)\d+[.)]\s+|\n", req.body)
+                         if "?" in line), req.body or req.title)
+        question = question.split("?", 1)[0] + "?" if "?" in question else question
+        mails.append({"team": team, "count": len(items), "draft": draft,
+                      "subject": lines[0], "greeting": lines[2], "question": question,
+                      "branches": req.branches, "short": height > LIMIT["team_lines"]})
+    return mails
 
 
 def _context(bundle: TriageBundle, meta: dict) -> dict:
-    priorities = {priority.finding_key: priority for priority in bundle.results}
-    by_id = {item.id: item for item in bundle.evidence}
-    decision_ids = []
-    decisions = {}
-    groups: dict[str, list[dict]] = {state: [] for state in _STATES}
-    for finding in bundle.findings:
-        verdict = finding.verdict
-        priority = priorities.get(finding.key)
-        state = finding_state(finding)
-        verdict_ids = [ref for item in verdict.item_results for ref in item.evidence_ids] if verdict else []
-        decision_ids.extend(verdict_ids)
-        lookup_ids = finding.hints.get("evidence_ids")
-        lookup_ids = {ref for ref in lookup_ids if isinstance(ref, str)} if isinstance(lookup_ids, list) else set()
-        # 선판정 유보의 조회 레코드는 후보별 출처다. 공통 소스 근거와 별도로 보관한다.
-        body_ids = verdict_ids
-        if verdict and verdict.decided_by == "rule:insufficient_evidence":
-            body_ids = [ref for ref in verdict_ids if ref not in lookup_ids]
-        body_ids = list(dict.fromkeys([*body_ids, *finding.component.evidence_ids]))
-        evidence = _evidence_details(body_ids, by_id)
-        locations = [item for item in evidence if item["location"] and item["has_line"]]
-        if verdict and verdict.decided_by == "rule:not_deployed":
-            locations.sort(key=lambda item: not item["id"].startswith("scope-"))
-        reason = _reason(finding, state)
-        links = _references([*finding.vulnerability.references, *(item["url"] for item in evidence)])
-        groups[state].append({
-            "component": finding.component.model_dump(mode="json"),
-            "vulnerability": finding.vulnerability.model_dump(mode="json"),
-            "asset": finding.asset_id,
-            "state": state,
-            "version_in_range": finding.version_in_range,
-            "reason": reason,
-            "summary_reason": _compact(reason, 52),
-            "location": locations[0]["location"] if locations else "",
-            "body_ids": body_ids,
-            "verdict": verdict.model_dump(mode="json") if verdict else {},
-            "priority": priority.model_dump(mode="json") if priority else {},
-            "evidence": locations[:2],
-            "links": links,
-            "link": links[0] if links else "",
-            "shown_links": set(links[:1]),
-        })
-        decisions[finding.key] = groups[state][-1]
-    for findings in groups.values():
-        findings.sort(key=lambda item: (
-            item["priority"].get("tier", "P5"), item["priority"].get("rank") or float("inf"),
-            item["vulnerability"]["id"], item["component"]["id"], item["asset"] or "",
-        ))
-    summaries = [item for findings in groups.values() for item in findings]
-    action_items = _action_cards(bundle, priorities, by_id, decisions, bundle.meta.get("fix_plan") or [])
-    details = {state: _detail_groups(groups[state], state) for state in ("affected", "undetermined")}
-    extra_links = defaultdict(dict)
+    from triage.actions import build_actions
+
+    meta = {**bundle.meta, **meta}
+    by_id = {e.id: e for e in bundle.evidence}
+    findings = {f.key: f for f in bundle.findings}
+    decisions = {f.key: _decision(f, by_id) for f in bundle.findings}
+    rank = {p.finding_key: (p.tier.rank, p.rank or float("inf")) for p in bundle.results}
+    groups = {state: [] for state in _STATES}
+    for key in sorted(findings, key=lambda k: (rank.get(k, (99, float("inf"))), findings[k].vulnerability.id, k)):
+        item = decisions[key]
+        groups[item["state"]].append(item)
+    summaries = [item for items in groups.values() for item in items]
+    edits = bundle.meta.get("fix_plan") or []
+    edit_indexes = defaultdict(list)
+    for i, edit in enumerate(edits):
+        for key in edit.get("findings", []):
+            edit_indexes[key].append(i)
+    actions = build_actions(bundle)
+    conclusion, metrics = action_view.action_summary(actions, bundle.findings)
+    plans = {r.finding_key: r for r in bundle.remediations}
+    action_items = []
+    for index, action in enumerate(actions, 1):
+        matching = sorted({i for key in action.findings for i in edit_indexes.get(key, [])})
+        plan = _action_plan(action, [findings[k] for k in action.findings], [edits[i] for i in matching], plans, decisions)
+        plan["n"] = index
+        action_items.append(plan)
+        for key in action.findings:
+            decisions[key]["action"] = index
+
+    components = {c.id: c for c in [*bundle.components, *(f.component for f in bundle.findings)]}
+    used = {ref for item in summaries for ref in item["refs"]}
+    for record in [*components.values(), *bundle.files, *bundle.anomalies]:
+        used.update(record.evidence_ids)
+    for edit in edits:
+        used.update(edit.get("evidence_ids", []))
+    citations, numbers = _citations(used, by_id)
     for item in summaries:
-        for url in item["links"]:
-            if url not in item["shown_links"]:
-                extra_links[item["vulnerability"]["id"]][url] = None
-    work_requests = [
-        item for item in summaries if item["verdict"].get("work_request")
-    ]
-    components = [*bundle.components, *(finding.component for finding in bundle.findings)]
+        item["sources"] = sorted({numbers[ref] for ref in item["refs"]})
+        runs = []
+        for number in item["sources"]:
+            if runs and runs[-1][1] == number - 1:
+                runs[-1][1] = number
+            else:
+                runs.append([number, number])
+        item["source_ranges"] = runs
+    project = meta.get("project")
+    name = (meta.get("name") or meta.get("project_name") or
+            (project.get("name") if isinstance(project, dict) else project) or meta.get("label") or "프로젝트 미기록")
+    mails = _mail_views(meta.get("label") or name, actions)
+    patch_name = meta.get("patch_name")
+    patch = ("git apply " + action_view.shell_arg(patch_name)
+             if patch_name and PureWindowsPath(patch_name).name == patch_name and not patch_name.startswith("-") else "")
+    scan = _scan_command(meta)
     return {
-        "meta": meta,
-        "components_count": len({item.id for item in components}),
-        "ecosystems": sorted({item.ecosystem for item in components if item.ecosystem}),
-        "folders": _folders(bundle, by_id),
-        "lookup_sources": _lookup_sources(bundle, meta),
-        "findings_count": len(bundle.findings),
-        "groups": groups,
-        "summaries": summaries,
-        "details": details,
-        "top_actions": action_items[:3],
-        "action_items": action_items,
-        "check_summary": _check_summary(bundle.meta.get("fix_check") or {}),
-        "scan_command": _scan_command(meta),
-        "work_requests": work_requests,
-        "states": _STATES,
-        "deployment": _DEPLOYMENT,
-        "conditions": _CONDITIONS,
-        "anomalies": [
-            {"kind": item.kind, "message": item.message,
-             "evidence": _evidence_details(item.evidence_ids, by_id)}
-            for item in bundle.anomalies
-        ],
-        "failed_stages": list(dict.fromkeys(
-            item.message.partition(" 단계 실패")[0].strip() if " 단계 실패" in item.message else "단계 미기록"
-            for item in bundle.anomalies if item.kind == "stage_failure"
-        )),
-        "extra_links": [{"id": identifier, "links": list(urls)} for identifier, urls in extra_links.items()],
-        "decision_evidence": _appendix_citations(decision_ids, by_id),
+        "name": name, "scope": meta.get("scope") or meta.get("source") or "범위 미기록",
+        "timestamp": meta.get("generated_at") or meta.get("scanned_at") or "시각 미기록",
+        "lookup_at": meta.get("lookup_at"), "lookup_sources": _lookup_sources(bundle, meta),
+        "components_count": len(components), "ecosystems": sorted({c.ecosystem for c in components.values() if c.ecosystem}),
+        "folders": _folders(bundle), "files_count": len(bundle.files), "file_types": _FILE_TYPES, "file_states": _FILE_SCOPE,
+        "conclusion": conclusion, "metrics": metrics, "board": action_view.action_board(actions, findings, by_id),
+        "action_items": action_items, "cards": [p for p in action_items if p["affected"]], "mails": mails,
+        "patch": patch, "scan_command": scan, "scan_example": action_view.scan_command("<서비스>", "", bool(meta.get("scan_offline"))),
+        "check_summary": action_view.check_summary(bundle.meta.get("fix_check") or {}),
+        "checked": (bundle.meta.get("fix_check") or {}).get("status") == "ok",
+        "groups": groups, "summaries": summaries, "states": _STATES, "conditions": _CONDITIONS,
+        "citations": citations, "ref_numbers": numbers, "limits": LIMIT, "incomplete": meta.get("incomplete_coverage"),
+        "limitations": meta.get("limitations") or [], "anomalies": [a.model_dump() for a in bundle.anomalies],
+        "degraded": next((a.message for a in bundle.anomalies if a.kind == "judge_degraded"), ""),
+        "failed": [a.message for a in bundle.anomalies if a.kind == "stage_failure"],
     }
 
 
@@ -400,7 +360,11 @@ def render_pdf(
     environment.filters["link_label"] = _link_label
     environment.filters["summary_text"] = _summary_text
     environment.filters["text_width"] = _text_width
-    context = Redactor().value(_context(bundle, {**bundle.meta, **meta}))
+    environment.filters["compact"] = _compact
+    environment.filters["css_text"] = lambda value: "".join(f"\\{ord(char):x} " for char in value)
+    environment.filters["url_tail"] = lambda url: urlsplit(url).path.rstrip("/").rsplit("/", 1)[-1]
+    environment.filters["local_time"] = _local_time
+    context = Redactor((str(Path.home()), Path.home().as_posix())).value(_context(bundle, meta))
     font = (_DIRECTORY / "fonts" / "NotoSansKR.ttf").resolve().as_uri()
     template = (_DIRECTORY / "report.html").read_text(encoding="utf-8")
     page = environment.from_string(template).render(**context, font=font)

@@ -125,6 +125,9 @@ def build_actions(bundle: TriageBundle) -> list[Action]:
         affected = sum(finding_state(f) == "affected" for f in members)
         counts = {"affected": affected, "undetermined": len(keys) - affected}
         request = top.verdict.work_request if top.verdict else None
+        if request is None:
+            request = next((f.verdict.work_request for f in members if f.verdict
+                            and f.verdict.state == "undetermined" and f.verdict.work_request), None)
         refs = finding_evidence(top)
         # 카드 첫 근거에서 실제 코드나 선언 위치를 바로 볼 수 있게 한다.
         refs.sort(key=lambda r: not (r in evidence and evidence[r].file and evidence[r].snippet))

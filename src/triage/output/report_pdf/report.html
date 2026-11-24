@@ -1,412 +1,237 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="ko">
 <head>
 <meta charset="utf-8">
-<title>취약점 조치 보고서</title>
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; font-src file:">
+<title>{{ name }} · 취약점 조치 보고서</title>
 <style>
-  @font-face {
-    font-family: Noto Sans KR;
-    src: url("{{ font }}") format("truetype");
-  }
-  @page {
-    size: A4;
-    margin: 13mm 15mm 16mm;
-    @bottom-left { content: "취약점 조치 보고서"; color: #486078; font-size: 8pt; }
-    @bottom-right { content: counter(page) " / " counter(pages); color: #486078; font-size: 8pt; }
-  }
-  @page appendix { @bottom-left { content: "취약점 조치 보고서 · 부록"; } }
-  body { font: 11pt/1.5 Noto Sans KR, sans-serif; color: #182d40; margin: 0; }
-  h1, h2, h3, h4 { line-height: 1.35; break-after: avoid; }
-  h1 { font-size: 25pt; margin: 0 0 1mm; }
-  h2 { font-size: 14pt; margin: 5.5mm 0 2.5mm; border-bottom: 1px solid #9db2c4; padding-bottom: 1mm; }
-  h3 { font-size: 14pt; margin: 4mm 0 1mm; }
-  h4 { font-size: 12pt; margin: 3mm 0 1mm; }
-  p { margin: 1mm 0; orphans: 2; widows: 2; }
-  ul, ol { margin: 1mm 0; padding-left: 6mm; }
-  a { color: #155488; }
-  table { font-size: 10pt; border-collapse: collapse; width: 100%; margin: 2mm 0; table-layout: fixed; }
-  th, td { border-bottom: 1px solid #cad7e1; padding: 1.3mm 2mm; vertical-align: top; text-align: left; }
-  th { background: #edf3f7; }
-  tr { break-inside: avoid; }
-  .compact th, .compact td { padding: 0.8mm 1.2mm; overflow-wrap: anywhere; }
-  .compact p { margin: 0; }
-  .summary { break-after: page; }
-  .summary header { border-bottom: 2pt solid #163451; padding-bottom: 2mm; }
-  .summary h1 { font-size: 19pt; }
-  .conclusion { font-size: 15pt; font-weight: bold; margin: 1mm 0; }
-  .summary h2 { border: 0; margin: 3mm 0 1mm; }
-  .card { border-left: 4pt solid #227384; background: #f2f6f8; padding: 2mm 3mm; margin: 2mm 0; break-inside: avoid; }
-  .card.affected { border-color: #ad4826; }
-  .card h3 { font-size: 14pt; margin: 0 0 0.6mm; }
-  .card p { margin: 0; }
-  .card b { color: #234761; margin-right: 2mm; }
-  .summary .notice { margin: 1mm 0; padding: 1mm 2mm; background: #fff2d9; }
-  .command { font-family: inherit; white-space: pre-wrap; overflow-wrap: anywhere; }
-  .finding { border-left: 2pt solid #23768c; margin: 2mm 0 4mm; padding-left: 3mm; }
-  .muted { color: #486078; }
-  .notice { background: #edf3f7; padding: 2mm 3mm; }
-  .wrap { overflow-wrap: anywhere; }
-  .pre { white-space: pre-wrap; overflow-wrap: anywhere; }
-  .ref { color: #486078; }
-  .evidence-list { list-style: none; padding-left: 0; margin: 1.5mm 0; }
-  .evidence-row { break-inside: avoid; padding: 0.6mm 2mm; border-bottom: 1px solid #dae4eb; }
-  .evidence-row .pre { margin: 0; }
-  .appendix { page: appendix; }
-  .appendix h3 { margin-top: 2.3mm; }
-  .appendix .evidence-row { padding: 0.35mm 1mm; }
+@font-face { font-family: Report; src: url("{{ font }}") format("truetype"); }
+@page {
+  size: A4 portrait; margin: 13mm 12mm 12mm;
+  @top-left { content: "{{ name|summary_text(limits.label)|css_text }}   /   취약점 조치 보고서"; font: 8pt Report,sans-serif; color: #46586c; }
+  @top-right { content: counter(page) " / " counter(pages); font: 8pt Report,sans-serif; color: #46586c; }
+}
+* { box-sizing: border-box; }
+html { font-family: Report, "Malgun Gothic", sans-serif; color: #1a293c; font-variant-ligatures: none; font-feature-settings: "liga" 0, "clig" 0; }
+body { margin: 0; font-size: 10pt; line-height: 1.39; overflow-wrap: anywhere; print-color-adjust: exact; -webkit-print-color-adjust: exact; }
+h1,h2,h3,h4,p { margin: 0; }
+h1,h2,h3,h4 { break-after: avoid; line-height: 1.26; }
+h1 { font-size: 23pt; margin: 1.5mm 0; letter-spacing: -.6pt; }
+h2 { font-size: 15pt; margin: 3.5mm 0 2mm; }
+h3 { font-size: 11.5pt; margin: 2.4mm 0 1mm; }
+h4 { font-size: 10pt; }
+a { color: #22558a; text-decoration: underline; text-underline-offset: .15em; }
+.dev { break-after: page; }
+.mast { border-top: 2pt solid #233e5d; padding: 2mm 0; }
+.kicker, .muted { color: #4a5d70; }
+.kicker { font-size: 8.5pt; font-weight: bold; }
+.hero { color: #172e49; background: #edf2f8; border-left: 3pt solid #4a6b96; margin: 2mm 0; padding: 2mm 3mm; font-size: 14pt; font-weight: bold; }
+.hero.affected { background: #fde7e4; border-color: #a8221a; color: #781d19; }
+.hero.undetermined { background: #fff2cc; border-color: #7a5200; color: #624400; }
+table { border-collapse: collapse; width: 100%; table-layout: fixed; margin: 1mm 0 2mm; }
+th,td { text-align: left; vertical-align: top; border-bottom: .45pt solid #d4dde5; padding: 1.2mm 1.4mm; overflow-wrap: anywhere; }
+th { background: #e9eff4; color: #273e56; font-weight: bold; }
+tbody tr:nth-child(even) { background: #f5f7f9; }
+tr { break-inside: avoid; }
+thead { display: table-header-group; }
+.stats { margin: 0 0 2mm; }
+.stats td { border: 1pt solid white; background: #eff3f7; padding: 1.5mm 3mm; font-size: 9pt; }
+.stats strong { display:block; font-size: 18pt; line-height: 1.1; }
+.stats .affected, .affected .state { color: #a8221a; background: #fde7e4; }
+.stats .undetermined, .undetermined .state { color: #7a5200; background: #fff2cc; }
+.stats .not_affected, .not_affected .state { background: #edf0f2; color: #475361; }
+.board { font-size: 8pt; line-height: 1.26; }
+.board th,.board td { padding: 1.35mm .9mm; }
+.board th,.board .state { word-break: keep-all; }
+.board tr.affected { background: #fff5f3; }
+.board .num { text-align: center; }
+.note { background: #fff3d2; padding: 1mm 2mm; font-size: 9pt; margin: 1mm 0; }
+.jump,.meta { font-size: 8.8pt; color: #4b6073; }
+.step { padding: 1.5mm 0; border-top: .5pt solid #d3dce5; }
+.step b { color: #1c3c58; margin-right: 2mm; }
+.cmd { display: block; font: 9pt/1.4 Consolas, "DejaVu Sans Mono", Report, monospace; font-variant-ligatures: none; background: #eef2f6; color: #172f49; padding: 1.3mm 2mm; margin: .8mm 0; white-space: pre-wrap; }
+.fix,.mail { padding: 2.5mm 3mm; margin: 2mm 0 3mm; border: .7pt solid #ccd8e2; border-left: 2.5pt solid #a8221a; break-inside: avoid; }
+.fix h3,.mail h3 { margin: 0 0 1mm; }
+.fix p,.mail p { margin: .8mm 0; }
+.fix b { color: #324c64; margin-right: 1.5mm; }
+.snippet { white-space: pre-wrap; font: 8.5pt/1.33 Report,sans-serif; margin: 1mm 0; padding: 1mm 2mm; background: #f0f3f6; }
+.mail { border-left-color: #41658f; }
+.pre { white-space: pre-wrap; }
+.appendix { font-size: 9.5pt; }
+.appendix h2 { border-top: 1.2pt solid #36536e; padding-top: 2mm; margin: 3mm 0 1.5mm; }
+.dense { font-size: 8.2pt; line-height: 1.26; }
+.dense td,.dense th { padding: .75mm 1mm; }
+.cite,.detail-line { font-size: 8pt; color: #41576a; }
+.cite a { text-decoration: none; }
+.index { font-size: 7.9pt; line-height: 1.2; }
+.index td { padding: .6mm 1mm; }
+.index td + td { border-left: .5pt solid #d4dde5; }
+.eids { color: #516172; }
+ul { padding-left: 5mm; margin: 1mm 0; }
 </style>
 </head>
 <body>
-{% macro refs(ids) -%}
-  {% if ids %}<span class="ref">[{{ ids | join(', ') }}]</span>{% endif %}
+{% macro short_list(values, count) -%}
+{{ values[:count]|join(', ') }}{% if values|length > count %} 외 {{ values|length - count }}개{% endif %}
 {%- endmacro %}
-{% macro evidence_rows(items, with_snippet=true, with_links=true) -%}
-  {% if items %}
-    <ul class="evidence-list{% if not with_snippet %} compact{% endif %}">
-    {% for item in items %}
-      {% set url = (item.url | public_url) if with_links else '' %}
-      <li class="evidence-row wrap">
-        {% if item.location and (item.has_line or not url) %}<strong>{{ item.location }}</strong>{% endif %}
-        {% if url %}<a href="{{ url }}">{{ url }}</a>{% endif %}
-        {% if not item.location and not url %}<span class="muted">원문 위치 미기록</span>{% endif %}
-        {{ refs(item.ids if item.ids is defined else [item.id]) }}
-        {% if with_snippet and item.snippet %}<p class="pre">{{ item.snippet }}</p>{% endif %}
-      </li>
-    {% endfor %}
-    </ul>
-  {% endif %}
+{% macro link(url) -%}
+{% if url|public_url %}<a href="{{ url }}">{{ url|link_label|summary_text(limits.label) }} 권고문</a>{% else %}권고문 미기록{% endif %}
 {%- endmacro %}
-{% macro links(urls) -%}
-  {% for url in urls if url | public_url %}
-    <li class="wrap"><a href="{{ url }}">{{ url }}</a></li>
-  {% else %}
-    <li>공개 권고문 링크 확인 필요</li>
-  {% endfor %}
+{% macro board_table(rows, compact=true) %}
+<table class="board">
+<colgroup>{% for width in [5,8,16,11,6,6,7,16,11,14] %}<col style="width:{{ width }}%">{% endfor %}</colgroup>
+<thead><tr>{% for key in board[0] %}<th>{{ key }}</th>{% endfor %}</tr></thead>
+<tbody>{% for row in rows %}<tr class="{{ 'affected' if row['영향 있음'] else 'undetermined' }}">
+{% for k,v in row.items() %}<td class="{{ 'state' if k == '구분' else 'num' if k in ['순서','영향 있음','확인 필요'] }}">
+{% if compact and k in ['구성요소','목표'] %}{{ v|summary_text(limits.board_component) }}{% elif compact and k == '근거 위치' %}{{ v|summary_text(limits.board_location, tail=true) }}{% elif compact and k == '연락할 부서' %}{{ v|summary_text(limits.board_team) }}{% else %}{{ v }}{% endif %}</td>{% endfor %}
+</tr>{% endfor %}</tbody></table>
+{% endmacro %}
+{% macro plan_table(items, compact=true) %}
+<table class="{{ 'dense' if not compact }}"><colgroup><col style="width:8%"><col style="width:29%"><col style="width:32%"><col style="width:31%"></colgroup>
+<thead><tr><th>할 일</th><th>무엇을</th><th>적용 방법</th><th>확인 방법</th></tr></thead>
+<tbody>{% for p in items %}<tr><td>{{ p.n }}</td><td><b>{{ p.component|summary_text(limits.id) if compact else p.component }}</b><br>{{ p.target_label|summary_text(limits.label) if compact else p.target_label }}</td>
+<td>{{ p.method|summary_text(limits.plan_text) if compact else p.method }}</td><td>{{ p.verify }}</td></tr>{% endfor %}</tbody></table>
+{% endmacro %}
+{% macro scan_block() -%}
+{% if scan_command|text_width <= limits.command_columns %}<code class="cmd">{{ scan_command }}</code>{% else %}<code class="cmd">{{ scan_example }}</code><a href="#command">부록 A에서 실제 인자가 포함된 재점검 명령 복사</a>{% endif %}
 {%- endmacro %}
-{% macro action_target(item) -%}
-  {% if item.target and item.verified %}목표 버전 {{ item.target }}
-  {% elif item.target %}목표 버전 후보 {{ item.target }} (확인 필요)
-  {% elif item.kind == 'confirm' %}영향 조건 확인 후 목표 결정
-  {% else %}목표 버전 확인 필요{% endif %}
-{%- endmacro %}
-{% macro action_heading(item, index) -%}
-  <h3>할 일 {{ index }} · {{ item.title }}</h3>
-  <p>{{ action_target(item) }}</p>
-  <p class="compact wrap">관련 취약점 {{ item.identifiers | join(', ') }}</p>
-  {% if item.evidence %}{{ evidence_rows(item.evidence, with_snippet=false) }}
-  {% else %}<p class="ref">대표 근거 위치 미기록</p>{% endif %}
-{%- endmacro %}
-{% macro change(edit, summary_index=none) -%}
-  {% set location = edit.file ~ ':' ~ edit.line %}
-  {% set short_path = location | summary_text(48, tail=true) %}
-  {% if edit.kind == 'manual' %}수동 확인 · {{ edit.reason | summary_text(92) if summary_index else edit.reason }}
-  {% elif summary_index and ((short_path ~ edit.before ~ edit.after) | text_width > 145 or '\n' in edit.before or '\n' in edit.after or '\t' in edit.before or '\t' in edit.after) %}
-    {{ short_path }} 변경 · 3절 할 일 {{ summary_index }}의 변경 원문 참조
-  {% elif summary_index %}<strong>{{ short_path }}</strong> <span class="pre">{{ edit.before }} → {{ edit.after }}</span>
-  {% else %}<strong>{{ location }}</strong><br><span class="pre">{{ edit.before }}</span><br>→ <span class="pre">{{ edit.after }}</span>{% endif %}
-{%- endmacro %}
-{% macro next_step(item) -%}
-  {% if item.steps %}{{ item.steps[0] }}
-  {% elif item.kind == 'confirm' and item.missing_info %}{{ item.missing_info[0].what }} 확인 · {{ item.missing_info[0].where }}
-  {% elif item.kind == 'confirm' %}배포 설정과 호출 코드에서 권고문의 발현 조건을 확인합니다.
-  {% elif item.kind == 'base_image' %}배포 이미지의 태그·다이제스트를 확인하고 Dockerfile의 기반 이미지를 교체합니다.
-  {% else %}권고문의 수정 버전을 확인하고 의존성 명세와 잠금 파일을 갱신합니다.{% endif %}
-{%- endmacro %}
-{% set project = meta.get('project') %}
-{% set project = project if project is mapping else {} %}
-{% set project_name = meta.get('project') if meta.get('project') is string else project.get('name') %}
-{% set project_name = meta.get('name') or meta.get('project_name') or project_name or meta.get('label') or '프로젝트 식별 정보 미제공' %}
-<section class="summary wrap">
-  <header>
-    <h1>취약점 조치 보고서 · {{ project_name | summary_text(30) }}</h1>
-    <p class="conclusion">오늘 할 일 {{ action_items | length }}개 · 영향 있음 {{ groups.affected | length }} · 확인 필요 {{ groups.undetermined | length }} · 영향 없음 {{ groups.not_affected | length }}</p>
-  </header>
-  {% set judge_warnings = anomalies | selectattr('kind', 'equalto', 'judge_degraded') | list %}
-  {% if judge_warnings %}<p class="notice">{{ judge_warnings[0].message | summary_text(110) }}{% if judge_warnings | length > 1 %} 외 {{ judge_warnings | length - 1 }}건{% endif %}</p>{% endif %}
-  {% if failed_stages %}
-    <p class="notice"><strong>점검 일부 실패: {{ failed_stages | join(', ') | summary_text(55) }}</strong> · 다음 쪽에서 실패 사유 확인</p>
-  {% endif %}
-  {% if meta.get('incomplete_coverage') %}<p class="notice">점검 범위 일부 미확인 · 수집된 범위의 집계입니다.</p>{% endif %}
-  {% set other_anomalies = anomalies | rejectattr('kind', 'in', ['judge_degraded', 'stage_failure']) | list %}
-  {% if other_anomalies %}<p class="notice">입력 이상 {{ other_anomalies | length }}건 · 상세 근거는 다음 쪽에 있습니다.</p>{% endif %}
-  <h2>{{ '먼저 고칠 것' if groups.affected else '먼저 확인할 것' }}{% if top_actions %} {{ top_actions | length }}개{% endif %}</h2>
-  {% for item in top_actions %}
-    <article class="card{% if item.counts.affected %} affected{% endif %}">
-      <h3>{{ loop.index }}. {{ item.title | summary_text(86) }}</h3>
-      {% set target = '변경안 목표 ' ~ item.edits[0].target if item.edits and item.edits[0].kind == 'change' else action_target(item) %}
-      <p><b>무엇을</b>{{ item.component | summary_text(42, tail=true) }} → {{ target | summary_text(44) }}{% if item.tier %} · {{ item.tier }}{% endif %}</p>
-      <p><b>왜</b>{{ item.state }} · {{ item.reason | summary_text(67) }} · {{ item.location | summary_text(48, tail=true) or '파일·줄 미기록' }}</p>
-      <p><b>어떻게</b>{% if item.edits %}
-        {{ change(item.edits[0], loop.index) }}
-        {% if item.edits | length > 1 %} (전체 {{ item.edits | length }}건은 3절){% endif %}
-        {% else %}{{ next_step(item) | summary_text(108) }}{% endif %}</p>
-      <p><b>확인</b>{{ check_summary | summary_text(77) }} · 다시 실행<br>
-        {% if scan_command | text_width <= 100 %}<code class="command">{{ scan_command }}</code>{% else %}4절의 전체 명령 참조{% endif %}</p>
-    </article>
-  {% else %}
-    <p>{{ '점검 범위와 실패 단계를 확인해 주세요.' if failed_stages or meta.get('incomplete_coverage') else '이번 점검에서 확인된 조치 대상이 없습니다.' }}</p>
-  {% endfor %}
+{% macro heading(section, title) -%}<header class="mast"><div class="kicker">개발자용 · {{ section }}</div><h1>{{ title }}</h1></header>{%- endmacro %}
+{% macro refs(ids) -%}{% for ref in ids %}<span class="cite">[{{ ref }}]</span> {% endfor %}{%- endmacro %}
+<section class="dev">
+{{ heading('한눈 요약', '취약점 조치 보고서') }}
+<p class="meta"><b>{{ name|summary_text(limits.label) }}</b> · {{ timestamp|local_time|summary_text(limits.label) }} · 점검 대상 {{ scope|summary_text(limits.location) }}</p>
+<div class="hero {{ 'affected' if groups.affected else 'undetermined' if groups.undetermined }}">{{ conclusion|summary_text(limits.sentence) }}</div>
+<table class="stats"><tr>{% for k,v in metrics.items() %}<td class="{{ ['', 'affected', 'undetermined', 'not_affected'][loop.index0] }}">{{ k }}<strong>{{ v }}</strong></td>{% endfor %}</tr></table>
+{% if degraded or failed or incomplete %}<p class="note">{{ degraded|summary_text(limits.sentence) }} {% if failed %}점검 일부 실패 · {{ failed[0]|summary_text(limits.label) }} {% endif %}{% if incomplete %}수집·조회 범위 일부 미확인{% endif %} · <a href="#scope">부록 A</a></p>{% endif %}
+<h2>조치 보드</h2>
+{% if board %}{{ board_table(board[:limits.board]) }}{% if board|length > limits.board %}<p class="jump">외 {{ board|length - limits.board }}개는 <a href="#more-board">부록 A · 나머지 조치</a></p>{% endif %}
+{% else %}<p>{% if failed or incomplete %}점검 범위와 실패 단계를 확인해 주세요.{% else %}{{ '확인한 후보는 모두 영향 없음으로 판정했습니다.' if summaries else '점검 범위 내 취약점 후보가 0건입니다.' }} 이번 점검에서 확인된 조치 대상이 없습니다.{% endif %}</p>{% endif %}
+<h2>지금 할 일</h2>
+<div class="step"><b>1 · {{ '변경안 적용' if patch else '변경 대상 확인' }}</b>
+{% if patch %}소스 폴더에서 변경안을 적용합니다.{% if patch|text_width <= limits.command_columns %}<code class="cmd">{{ patch }}</code>{% else %}<code class="cmd">git apply '&lt;변경안 파일명&gt;'</code><a href="#command">부록 A의 변경안 적용 명령</a>{% endif %}
+{% elif cards %}2쪽에서 변경할 선언과 목표 버전을 확인합니다.{% elif board %}담당 부서의 회신을 받아 변경 여부를 결정합니다.{% else %}바로 적용할 변경안이 없습니다.{% endif %}</div>
+<div class="step"><b>2 · 다시 점검</b> {% if checked %}변경안 기준 예상 결과 · {% endif %}{{ check_summary|summary_text(limits.sentence) }}{{ scan_block() }}</div>
+<div class="step"><b>3 · 확인 요청</b>{% for mail in mails[:limits.teams] %}{{ mail.team|summary_text(limits.badge) }} {{ mail.count }}건{% if not loop.last %} · {% endif %}{% else %}연락할 부서 없음{% endfor %}{% if mails|length > limits.teams %} 외 {{ mails|length - limits.teams }}개 부서{% endif %}{% if mails %} · <a href="#mail">3쪽 메일 초안</a>{% endif %}</div>
 </section>
 
-<section>
-  <h2>입력 이상</h2>
-  {% for anomaly in anomalies if anomaly.kind == 'judge_degraded' %}
-    <p class="notice"><strong>{{ anomaly.message }}</strong></p>
-  {% endfor %}
-  {% set other_anomalies = anomalies | rejectattr('kind', 'equalto', 'judge_degraded') | list %}
-  {% if other_anomalies %}
-    <ul>
-    {% for anomaly in other_anomalies %}
-      <li class="wrap">{{ anomaly.kind or '종류 미기록' }} · {{ anomaly.message }}
-        {% for item in anomaly.evidence if item.location %}
-          <strong>{{ item.location }}</strong> {{ refs([item.id]) }}
-        {% endfor %}
-      </li>
-    {% endfor %}
-    </ul>
-  {% elif not anomalies %}
-    <p>기록된 입력 이상이 없습니다.</p>
-  {% endif %}
+<section class="dev">
+{{ heading('조치 가이드', '바로 고칠 것') }}
+{% for p in cards[:limits.cards] %}{% set d = p.lead %}
+<article class="fix"><h3>할 일 {{ p.n }} · {{ p.component|summary_text(limits.label) }} → {{ p.target|summary_text(limits.id) }}</h3>
+<p class="meta">{{ short_list(p.ids[:limits.ranges]|map('summary_text',limits.id)|list, limits.ranges) }}{% if p.ids|length > limits.ranges %} 외 {{ p.ids|length - limits.ranges }}건{% endif %} · {{ link(d.link) }}</p>
+<p><b>왜 위험한가</b> {{ p.risk|summary_text(limits.risk) }}</p>
+<p><b>우리 코드 어디서</b> {{ d.location|summary_text(limits.line, tail=true) or '파일·줄 미기록' }}</p>
+{% if d.snippet %}<pre class="snippet">{{ d.snippet.splitlines()[:limits.snippet_lines]|map('summary_text',limits.line)|join('\n') }}</pre>{% endif %}
+<p><b>영향 버전 범위</b> {{ short_list(d.ranges|map('summary_text',limits.range)|list, limits.ranges) or '미기록' }}{% if p.ids|length > 1 %} · 대표 {{ d.id|summary_text(limits.id) }} 기준{% endif %}</p>
+<p><b>변경</b> {% if p.edit %}{{ p.edit.before|summary_text(limits.label) }} → {{ p.edit.after|summary_text(limits.label) }}{% else %}{{ p.component|summary_text(limits.id) }} → {{ p.target_label|summary_text(limits.label) }}{% endif %}</p></article>
+{% else %}<p>바로 고칠 것 없음</p>{% endfor %}
+{% if cards %}<p class="jump">{% if cards|length > limits.cards %}외 {{ cards|length - limits.cards }}개 조치와 {% endif %}<a href="#affected">후보별 조건과 변경 근거는 부록 D</a></p>{% endif %}
 </section>
 
-<section>
-  <h2>1. 점검 대상·범위</h2>
-  <p class="wrap">프로젝트 {{ project_name }}{% if meta.get('version') or project.get('version') %} · {{ meta.get('version') or project.get('version') }}{% endif %} · 생태계 {{ ecosystems | join(', ') or '미기록' }} · 구성요소 {{ components_count }}개</p>
-  {% if meta.get('generated_at') or meta.get('scanned_at') %}
-    <p>점검 시각 {{ meta.get('generated_at') or meta.get('scanned_at') }}</p>
-  {% endif %}
-  {% if meta.get('scope') or meta.get('source') %}
-    <p class="wrap">점검 대상 {{ meta.get('scope') or meta.get('source') }}</p>
-  {% endif %}
-  <table>
-    <thead><tr><th>후보</th>{% for label in states.values() %}<th>{{ label }}</th>{% endfor %}</tr></thead>
-    <tbody><tr><td>{{ findings_count }}건</td>
-      {% for items in groups.values() %}<td>{{ items | length }}건</td>{% endfor %}
-    </tr></tbody>
-  </table>
-  {% if meta.get('incomplete_coverage') %}
-    <p class="notice">점검 범위가 일부 미확인입니다. 아래 후보 집계는 확인된 범위의 결과입니다.</p>
-  {% endif %}
-  {% if not findings_count and not failed_stages and not meta.get('incomplete_coverage') %}
-    <p class="notice">점검 범위 내 취약점 후보가 0건입니다. 이번 점검에서 확인된 조치 대상이 없습니다.</p>
-  {% elif findings_count and groups.not_affected | length == findings_count and not failed_stages %}
-    <p class="notice">확인한 취약점 후보 {{ findings_count }}건은 모두 영향 없음으로 판정했습니다. 이번 점검에서 확인된 조치 대상이 없습니다.</p>
-  {% endif %}
-  <h3>배포 폴더 요약</h3>
-  {% if folders %}
-    <table class="compact">
-      <colgroup><col style="width: 32%"><col style="width: 40%"><col style="width: 28%"></colgroup>
-      <thead><tr><th>폴더 및 파일 수</th><th>분류 이유</th><th>대표 근거</th></tr></thead>
-      <tbody>
-      {% for folder in folders %}
-        <tr><td><strong>{{ folder.path }}</strong><br>배포됨 {{ folder.counts.get('yes', 0) }}개 파일 / 미배포 {{ folder.counts.get('no', 0) }}개
-            {% if folder.counts.get('unknown') %} / 미확인 {{ folder.counts.unknown }}개{% endif %}</td>
-          <td>{% for reason in folder.reasons %}
-            <p>{{ reason.state }} · {{ reason.text }}{% if reason.others %} 외 {{ reason.others }}개 사유{% endif %}</p>
-          {% endfor %}</td>
-          <td>{% for item in folder.evidence %}
-            <p>{% if item.location and (item.has_line or not item.url) %}{{ item.location }}
-              {% elif item.url | public_url %}<a href="{{ item.url }}">{{ item.url | link_label }}</a>{% endif %}
-              {{ refs([item.id]) }}</p>
-          {% endfor %}</td>
-        </tr>
-      {% endfor %}
-      </tbody>
-    </table>
-  {% else %}
-    <p>배포 파일 분류 기록이 없습니다.</p>
-  {% endif %}
-  <h3>조회한 데이터 출처와 시점</h3>
-  {% if meta.get('lookup_at') %}<p>조회 시각 {{ meta.lookup_at }}</p>{% endif %}
-  {% if lookup_sources %}
-    <ul>
-      {% for source in lookup_sources %}
-        <li class="wrap">
-          {% if source.url | public_url %}<a href="{{ source.url }}">{{ source.name }}</a>
-          {% else %}{{ source.name }}{% endif %}
-          {% if source.retrieved_at %} · 조회 시각 {{ source.retrieved_at }}{% endif %}
-          {% if source.dates %} · 자료 기준일 {{ source.dates | join(', ') }}
-          {% elif not source.retrieved_at and not meta.get('lookup_at') %} · 시점 미기록{% endif %}
-        </li>
-      {% endfor %}
-    </ul>
-  {% else %}
-    <p>조회 출처 기록이 없습니다.</p>
-  {% endif %}
+<section class="dev" id="mail">
+{{ heading('업무 요청', '연락할 부서별 확인 요청') }}
+{% for m in mails[:limits.teams] %}<article class="mail"><h3>{{ m.team|summary_text(limits.label) }} · {{ m.count }}건</h3>
+{% if not m.short %}<div class="pre">{{ m.draft }}</div>
+{% else %}<b>{{ m.subject|summary_text(limits.line) }}</b><p>{{ m.greeting|summary_text(limits.condition) }}</p>
+<p><b>질문</b> {{ m.question|summary_text(limits.question) }}</p>
+{% for branch in m.branches[:limits.branches] %}<p class="detail-line">• {{ branch|summary_text(limits.risk) }}</p>{% else %}<p class="detail-line">회신 내용을 근거로 판정과 조치 계획을 갱신하겠습니다.</p>{% endfor %}
+<a class="jump" href="#draft-{{ loop.index }}">부록 C에서 메일 전문 확인</a>{% endif %}</article>
+{% else %}<p>연락할 부서가 없습니다.</p>{% endfor %}
+{% if mails|length > limits.teams %}<p class="jump">외 {{ mails|length - limits.teams }}개 부서의 초안은 <a href="#full-mails">부록 C</a></p>{% endif %}
 </section>
 
-<section>
-  <h2>2. 취약점 후보별 판정 및 근거</h2>
-  {% if summaries %}
-    <table class="compact">
-      <colgroup><col style="width: 30%"><col style="width: 39%"><col style="width: 31%"></colgroup>
-      <thead><tr><th>취약점 및 구성요소</th><th>판정 및 사유</th><th>근거 및 권고문</th></tr></thead>
-      <tbody>
-      {% for item in summaries %}
-        {% set c = item.component %}
-        <tr>
-          <td><strong>{{ item.vulnerability.id }}</strong><br>{% if c.group %}{{ c.group }}:{% endif %}{{ c.name }} · {{ c.version or '미기록' }}</td>
-          <td><strong>{{ states[item.state] }}</strong><br>{{ item.summary_reason }}</td>
-          <td>{{ item.location or '파일·줄 미기록' }}<br>{% if item.link | public_url %}<a href="{{ item.link }}">{{ item.link | link_label }}</a>{% else %}대표 링크 미기록{% endif %}</td>
-        </tr>
-      {% endfor %}
-      </tbody>
-    </table>
-  {% else %}
-    <p>기록된 취약점 후보가 없습니다.</p>
-  {% endif %}
-
-  {% for state, items in details.items() if items %}
-    <h3>{{ states[state] }} 상세</h3>
-    {% for item in items %}
-      {% set c = item.component %}
-      {% set d = item.verdict %}
-      <article class="finding wrap">
-        <h4>{% if c.group %}{{ c.group }}:{% endif %}{{ c.name }}{% if item.asset %} · {{ item.asset }}{% endif %}</h4>
-        <p class="compact">{{ item.identifiers | join(', ') }}</p>
-        <p>현재 버전 {{ c.version or '확인되지 않음' }} · 버전 출처 {{ c.version_source or 'unknown' }}
-          · 배포 {{ deployment.get(c.deployed, deployment.unknown) }}</p>
-        {% if c.deployed_reason %}<p>{{ c.deployed_reason }}</p>{% endif %}
-        {% if c.module %}<p>모듈 {{ c.module }}</p>{% endif %}
-        {% if item.identifiers | length == 1 %}
-          {% set v = item.vulnerability %}
-          {% if v.title %}<p>{{ v.title }}</p>{% endif %}
-          {% if v.severity or v.cvss_score is not none %}
-            <p>심각도 {{ v.severity or '확인되지 않음' }}{% if v.cvss_score is not none %} · CVSS {{ v.cvss_score }}{% endif %}</p>
-          {% endif %}
-          {% if v.affected_ranges or item.version_in_range is not none %}
-            <p>영향 버전 범위 {{ v.affected_ranges | join(', ') or '확인되지 않음' }}
-              {% if item.version_in_range is not none %} · 현재 버전 {{ '범위 안' if item.version_in_range else '범위 밖' }}{% endif %}</p>
-          {% endif %}
-        {% endif %}
-        <p>판정 {{ states[state] }} · {{ item.reason }}</p>
-        {% if d.plain_ko and d.plain_ko != item.reason %}<p>개발자를 위한 설명 {{ d.plain_ko }}</p>{% endif %}
-        {% for condition in d.get('item_results', []) if condition.reason != item.reason %}
-          {% if loop.first %}<ul>{% endif %}
-            <li>{{ condition.item_key }} · {{ conditions.get(condition.status, conditions.unknown) }}
-              {% if condition.reason %} · {{ condition.reason }}{% endif %} {{ refs(condition.evidence_ids) }}</li>
-          {% if loop.last %}</ul>{% endif %}
-        {% endfor %}
-        {{ evidence_rows(item.evidence, with_links=false) }}
-        {% if item.missing_info %}
-          <p>추가로 확인할 정보</p>
-          <ul>{% for missing in item.missing_info %}<li>{{ missing.what }} · 확인 위치 {{ missing.where }}</li>{% endfor %}</ul>
-        {% endif %}
-        <p>대표 공개 권고문</p><ul class="compact">{{ links(item.links) }}</ul>
-      </article>
-    {% endfor %}
-  {% endfor %}
+<section class="dev">
+{{ heading('개발자가 할 일', '적용·검증 계획') }}
+{% if action_items %}{{ plan_table(action_items[:limits.plans]) }}{% if action_items|length > limits.plans %}<p class="jump">외 {{ action_items|length - limits.plans }}개는 <a href="#more-plan">부록 A · 조치 순서표 계속</a></p>{% endif %}{% else %}<p>현재 확인된 조치 대상이 없어 조치 후 검증 항목이 없습니다.</p>{% endif %}
+<h3>재점검 명령</h3>{{ scan_block() }}<p>{% if checked %}변경안 기준 예상 결과 · {% endif %}{{ check_summary|summary_text(limits.sentence) }}</p>
+<h3>테스트 확인 항목</h3>
+<ul><li>조치 후 잠금 파일과 배포 산출물에서 실제 설치 버전을 확인합니다.</li>
+<li>서비스 기동과 변경한 기능의 회귀 테스트를 확인합니다.</li>
+<li>처음 점검과 같은 범위에서 해소·남음·새로 생긴 후보를 대조합니다.</li></ul>
+<h3>결과 공유</h3><p>재점검 결과와 이 PDF를 보안 담당자·팀장에게 공유합니다.</p>
 </section>
-
-<section>
-  <h2>3. 조치 항목 및 우선순위</h2>
-  {% for item in action_items %}
-    <article class="finding wrap">
-      {{ action_heading(item, loop.index) }}
-      <p>영향 있음 {{ item.counts.affected }}건 · 판단 유보 {{ item.counts.undetermined }}건
-        · 우선순위 {{ item.tier or '미산정' }} · 기한 {{ item.due or '미정' }}</p>
-      {% for edit in item.edits %}<p>{{ change(edit) }} {{ refs(edit.evidence_ids) }}</p>{% endfor %}
-      {% if item.kind == 'confirm' %}
-        <p>배포 환경에서 영향 조건을 확인하고 4절의 확인 결과로 재판정합니다.</p>
-      {% elif item.steps %}
-        <ol>{% for step in item.steps %}<li>{{ step }}</li>{% endfor %}</ol>
-      {% elif item.kind == 'base_image' %}
-        <p>배포 중인 이미지의 태그와 다이제스트를 확인한 뒤 Dockerfile의 기반 이미지를 교체합니다.</p>
-      {% else %}
-        <p>권고문에서 수정 버전을 확인한 뒤 의존성 명세와 잠금 파일을 갱신합니다.</p>
-      {% endif %}
-      {% for workaround in item.workarounds %}<p>임시 완화 방안 {{ workaround }}</p>{% endfor %}
-    </article>
-  {% else %}
-    <p>{{ '실패 단계의 결과를 확인한 뒤 조치 대상을 다시 판단합니다.' if failed_stages else '현재 확인된 조치 대상이 없습니다.' }}</p>
-  {% endfor %}
-</section>
-
-<section>
-  <h2>4. 검증 계획</h2>
-  {% if action_items %}<p class="wrap">{{ check_summary }} · 다시 실행 <code class="command">{{ scan_command }}</code></p>{% endif %}
-  {% for item in action_items %}
-    <article class="finding wrap">
-      {{ action_heading(item, loop.index) }}
-      {% if item.kind == 'confirm' %}
-        <p>확인할 것 · 다음 정보를 확보해 관련 후보의 영향 여부를 다시 판정합니다.</p>
-      {% elif item.kind == 'base_image' %}
-        <p>확인할 것 · 배포한 이미지의 다이제스트와 런타임 패치 버전을 기록하고 SBOM을 다시 생성해 관련 권고문과 대조합니다.</p>
-      {% else %}
-        <p>확인할 것 · 조치 후 잠금 파일과 배포 산출물에서 실제 설치 버전을 확인합니다. 소스를 재점검해 관련 후보의 영향 범위와 회귀 테스트 결과를 확인합니다.</p>
-      {% endif %}
-      {% if item.missing_info %}
-        <ul>{% for m in item.missing_info %}<li>{{ m.what }} · 확인 위치 {{ m.where }}</li>{% endfor %}</ul>
-      {% elif item.kind == 'confirm' %}
-        <p>배포 설정과 호출 코드에서 권고문의 발현 조건을 확인합니다.</p>
-      {% endif %}
-      {% if item.verify_notes %}
-        <p>목표 선정 시 확인 기록</p>
-        <ul>{% for note in item.verify_notes %}<li>{{ note }}</li>{% endfor %}</ul>
-      {% endif %}
-    </article>
-  {% else %}
-    <p>현재 확인된 조치 대상이 없어 조치 후 검증 항목이 없습니다.</p>
-  {% endfor %}
-</section>
-
-<section>
-  <h2>5. 점검 한계와 추가 확인</h2>
-  {% if meta.get('limitations') is string %}<p>{{ meta.limitations }}</p>
-  {% elif meta.get('limitations') %}<ul>{% for item in meta.limitations %}<li>{{ item }}</li>{% endfor %}</ul>{% endif %}
-  <p>결과는 이번 실행에서 수집한 구성요소, 확인 가능한 배포 범위, 조회한 권고문을 기준으로 합니다.</p>
-</section>
-
-<section>
-  <h2>업무 요청 초안</h2>
-  {% for item in work_requests %}
-    {% set request = item.verdict.work_request %}
-    <article class="finding wrap">
-      <h3>{{ request.title or '추가 확인 요청' }}</h3>
-      <p>받는 팀 {{ request.to_team }} · 관련 후보 {{ item.vulnerability.id }} / {{ item.component.name }}</p>
-      <p class="pre">{{ request.body }}</p>
-      {% if request.branches %}<ul>{% for branch in request.branches %}<li>{{ branch }}</li>{% endfor %}</ul>{% endif %}
-    </article>
-  {% else %}
-    <p>등록된 업무 요청 초안이 없습니다.</p>
-  {% endfor %}
-</section>
-
-{% if decision_evidence or extra_links or folders %}
 <div class="appendix">
-  <section>
-    <h2>부록 · 판정 근거 목록</h2>
-    {% if decision_evidence %}
-      {{ evidence_rows(decision_evidence, false) }}
-    {% else %}
-      <p>판정에 인용된 근거가 없습니다.</p>
-    {% endif %}
-  </section>
-  {% if extra_links %}
-  <section>
-    <h2>부록 · 추가 참고 링크</h2>
-    {% for item in extra_links %}
-      <p class="compact wrap"><strong>{{ item.id }}</strong>
-        {% for url in item.links if url | public_url %}
-          · <a href="{{ url }}">{{ url | link_label }} {{ loop.index }}</a>
-        {% endfor %}
-      </p>
-    {% endfor %}
-  </section>
-  {% endif %}
-  {% if folders %}
-  <section>
-    <h2>부록 · 배포 파일 목록</h2>
-    {% for folder in folders %}
-      <h3 class="wrap">{{ folder.path }}</h3>
-      {% for entry in folder.entries %}
-        <p class="compact wrap"><strong>{{ entry.state }} · {{ entry.category }}</strong>
-          · {{ entry.names | join(', ') }} · {{ entry.reason }}</p>
+<p class="kicker">여기부터는 판정 근거 확인용입니다.</p>
+<h2 id="scope">부록 A · 점검 대상·범위</h2>
+<p><b>{{ name }}</b> · 점검 대상 {{ scope }} · 점검 시각 {{ timestamp }}</p>
+<p>생태계 {{ ecosystems|join(', ') or '미기록' }} · 구성요소 {{ components_count }}개 · 점검 파일 {{ files_count }}개 · 후보 {{ summaries|length }}건</p>
+<h3>배포 폴더 요약</h3>
+<p class="dense">{% for f in folders %}<b>{{ f.path }}</b> (배포 {{ f.counts.yes or 0 }} / 미배포 {{ f.counts.no or 0 }} / 미확인 {{ f.counts.unknown or 0 }}){% if not loop.last %} · {% endif %}{% else %}배포 파일 분류 기록이 없습니다.{% endfor %}</p>
+<h3>조회한 데이터 출처와 시점</h3>
+{% if lookup_at %}<p>조회 시각 {{ lookup_at }}</p>{% endif %}
+<p class="dense">{% for s in lookup_sources %}{% if s.url|public_url %}<a href="{{ s.url }}">{{ s.name }}</a>{% else %}{{ s.name }}{% endif %} · {{ s.retrieved_at or s.dates|join(', ') or lookup_at or '시점 미기록' }}{% if not loop.last %}　/　{% endif %}{% else %}조회 출처 기록이 없습니다.{% endfor %}</p>
+{% if anomalies or limitations or incomplete %}<h3>점검 한계와 입력 이상</h3>
+{% if incomplete %}<p>수집·조회 범위에 미확인 항목이 있습니다.</p>{% endif %}
+{% for a in anomalies %}<p class="dense">{{ a.message }} {{ refs(a.evidence_ids) }}</p>{% endfor %}
+{% for l in ([limitations] if limitations is string else limitations) %}<p>{{ l }}</p>{% endfor %}{% endif %}
+{% if board|length > limits.board %}<h3 id="more-board">나머지 조치</h3>{{ board_table(board[limits.board:], false) }}{% endif %}
+{% if action_items|length > limits.plans %}<h3 id="more-plan">조치 순서표 계속</h3>{{ plan_table(action_items[limits.plans:], false) }}{% endif %}
+{% if scan_command|text_width > limits.command_columns or patch|text_width > limits.command_columns %}<h3 id="command">전체 실행 명령</h3>{% if patch %}<code class="cmd">{{ patch }}</code>{% endif %}<code class="cmd">{{ scan_command }}</code>{% endif %}
+
+<h2 id="candidates">부록 B · 전체 후보 판정표</h2>
+{% if summaries %}<p class="detail-line">근거 번호를 누르면 부록 E에서 원래 근거 ID와 위치를 확인할 수 있습니다.</p>
+<table class="dense"><colgroup><col style="width:35%"><col style="width:65%"></colgroup>
+<thead><tr><th>취약점 · 구성요소@버전 · 대표 위치</th><th>영향 판정 및 사유 · 권고문과 근거 번호</th></tr></thead>
+<tbody>{% for d in summaries %}
+  <tr class="{{ d.state }}">
+    <td><b>{{ d.id }}</b>　{{ d.component }}<br><span class="cite">{{ d.location or '위치 미기록' }}</span></td>
+    <td><b class="state">{{ states[d.state] }}</b>　{{ d.summary|compact(limits.summary_chars) }}
+      <span class="cite"> · {{ link(d.link) }} · 근거
+        {% for start,end in d.source_ranges -%}
+          <a href="#ref-{{ start }}">{{ start }}{% if end > start %}–{{ end }}{% endif %}</a>{% if not loop.last %}·{% endif %}
+        {%- else %}미기록{% endfor %}
+      </span>
+    </td>
+  </tr>
+{% endfor %}</tbody></table>
+{% else %}<p>기록된 취약점 후보가 없습니다.</p>{% endif %}
+
+<h2 id="pending">부록 C · 판단 유보 확인 목록</h2>
+{% if groups.undetermined %}<table class="dense" id="pending-list"><colgroup><col style="width:48%"><col style="width:52%"></colgroup>
+<thead><tr><th>취약점 · 구성요소 · 영향을 가르는 조건</th><th>추가로 필요한 정보 · 확인 위치와 근거 참조</th></tr></thead>
+<tbody>{% for d in groups.undetermined %}<tr><td><b>{{ d.id }}</b>　{{ d.component }}<br>{{ d.condition|compact(limits.condition) }}</td>
+<td>{{ d.what|compact(limits.condition) }}<br><span class="cite">{{ d.where|compact(limits.location) }} {% if d.source_ref %}{{ refs([d.source_ref]) }}{% endif %}</span></td></tr>{% endfor %}</tbody></table>
+{% else %}<p>판단 유보 후보가 없습니다.</p>{% endif %}
+<div id="full-mails">{% for m in mails %}{% if m.short or loop.index > limits.teams %}<h3 id="draft-{{ loop.index }}">{{ m.team }} · 확인 요청 메일 전문</h3>
+{% for para in m.draft.split('\n\n') %}<p class="dense">{{ para }}</p>{% endfor %}{% endif %}{% endfor %}</div>
+
+<h2 id="affected">부록 D · 영향 있음 판정 상세</h2>
+{% for d in groups.affected %}<h3>{{ d.id }} · {{ d.component }}</h3>
+<p class="dense">할 일 {{ d.action }} · {{ d.deployment }} · 영향 버전 범위 {{ short_list(d.ranges, limits.ranges) or '미기록' }} · 현재 버전 {{ d.version or '미기록' }} ({{ '범위 안' if d.in_range == true else '범위 밖' if d.in_range == false else '범위 미확인' }}) · {{ link(d.link) }}</p>
+<p class="dense">{{ d.reason }}</p>
+{% for c in d.conditions %}<p class="detail-line"><b>{{ c.item_key }} · {{ conditions.get(c.status, conditions.unknown) }}</b> {{ c.reason }} {{ refs(c.evidence_ids) }}</p>{% endfor %}
+{% else %}<p>바로 고칠 것 없음</p>{% endfor %}
+{% for p in cards %}<h4>할 일 {{ p.n }} · {{ p.component }} → {{ p.target_label }}</h4>
+{% for e in p.edits %}<p class="dense">{% if e.kind == 'change' %}{{ e.file }}:{{ e.line }} · {{ e.before }} → {{ e.after }}{% else %}수동 확인 · {{ e.reason }}{% endif %} {{ refs(e.evidence_ids) }}</p>{% else %}<p class="dense">{{ p.method }}</p>{% endfor %}
+{% endfor %}
+
+<h2>부록 E · 근거 목록과 배포 파일 목록</h2>
+{% macro evidence_table(items, columns, title) %}
+{% if items %}
+<table class="index">
+  <thead><tr><th colspan="{{ columns }}">{{ title }} · 근거 번호와 ID</th></tr></thead>
+  <tbody>
+    {% for row in items|batch(columns) %}
+    <tr>
+      {% for e in row %}
+      <td>
+        {{ e.location }}{% if e.url|public_url %}<a href="{{ e.url }}">{{ e.url|link_label }} · {{ e.url|url_tail }}</a>{% endif %}
+        <span class="eids">{% for ref in e.ids %}<span id="ref-{{ ref_numbers[ref] }}">{{ ref_numbers[ref] }} [{{ ref }}]</span> {% endfor %}</span>
+      </td>
       {% endfor %}
+      {% for unused in range(columns - row|length) %}<td></td>{% endfor %}
+    </tr>
     {% endfor %}
-  </section>
-  {% endif %}
-</div>
+  </tbody>
+</table>
 {% endif %}
-</body>
-</html>
+{% endmacro %}
+{{ evidence_table(citations|selectattr("url")|list, 3, "공개 권고문과 조회 출처") }}
+{{ evidence_table(citations|rejectattr("url")|selectattr("location")|list, 2, "코드·설정 위치") }}
+{% if not citations %}<p>인용된 근거가 없습니다.</p>{% endif %}
+{% for e in citations if e.unlocated %}<p class="index"><b>파일·링크 미기록</b>　{% for ref in e.ids %}<span id="ref-{{ ref_numbers[ref] }}">{{ ref_numbers[ref] }} [{{ ref }}]</span> {% endfor %}</p>{% endfor %}
+<h3>배포 파일 목록</h3>
+{% for f in folders %}<p class="dense"><b>{{ f.path }}</b>　{% for item in f.files %}{{ item.name }} ({{ file_states.get(item.deployed,'배포 미확인') }} · {{ file_types.get(item.category,item.category) }}{% if item.evidence_ids %} · 근거 {% for ref in item.evidence_ids %}<a href="#ref-{{ ref_numbers[ref] }}">{{ ref_numbers[ref] }}</a>{% if not loop.last %}·{% endif %}{% endfor %}{% endif %}){% if not loop.last %} / {% endif %}{% endfor %}</p>
+{% else %}<p>배포 파일 분류 기록이 없습니다.</p>{% endfor %}
+</div>
+</body></html>

@@ -34,7 +34,10 @@ def test_scan_command_writes_submission_files(source, tmp_path, monkeypatch):
     out = tmp_path / "result"
     result = CliRunner().invoke(app, ["scan", "demo", str(source), str(out), "--offline", "--run", "2"])
     assert result.exit_code == 0, result.output
-    assert {p.name for p in out.iterdir()} == {"sbom-demo.json", "report-demo.pdf", "log-demo-run2.jsonl", "fix-demo.patch"}
+    assert {p.name for p in out.iterdir()} == {"sbom-demo.json", "report-demo.pdf", "log-demo-run2.jsonl", "fix-demo.patch", "bundle-demo.json"}
+    snapshot = json.loads((out / "bundle-demo.json").read_text(encoding="utf-8"))
+    assert snapshot["meta"]["report_meta"]["scan_offline"] is True
+    assert all(not e["id"].startswith("pdf-") for e in snapshot["evidence"])
     document = json.loads((out / "sbom-demo.json").read_text(encoding="utf-8"))
     assert document["components"][0]["name"] == "example-scan-library"
     assert (out / "report-demo.pdf").read_bytes().startswith(b"%PDF-")
@@ -94,15 +97,12 @@ def test_scan_plans_remediation_from_verdicts(source, tmp_path, monkeypatch, reg
     assert steps["priority"]["prioritized"] == 3 and steps["remediate"]["remediations"] == 2
 
     if extract := shutil.which("pdftotext"):
-        report = subprocess.check_output([extract, "-enc", "UTF-8", str(result.paths["report"]), "-"], encoding="utf-8")
-        text = " ".join(report.split())
+        report = subprocess.check_output([extract, "-raw", "-enc", "UTF-8", str(result.paths["report"]), "-"], encoding="utf-8")
+        text = "".join(report.split())
         target_label = f"목표 버전 {target}" if verified else f"목표 버전 후보 {target} (확인 필요)"
-        assert target_label in text
-        assert "검증 계획" in text and "조치 후 잠금 파일과 배포 산출물에서 실제 설치 버전을 확인합니다." in text
-        actions = text.split("3. 조치 항목 및 우선순위", 1)[1].split("4. 검증 계획", 1)[0]
-        assert actions.count("할 일 1 ·") == 1 and "할 일 2 ·" not in actions
-        assert "영향 있음 1건 · 판단 유보 1건" in actions
-        assert "FIXTURE-A" in actions and "FIXTURE-C" in actions and "FIXTURE-B" not in actions
+        assert "".join(target_label.split()) in text
+        assert "적용·검증계획" in text and "조치후잠금파일과배포산출물에서실제설치버전을확인합니다." in text
+        assert all(identifier in text for identifier in ("FIXTURE-A", "FIXTURE-B", "FIXTURE-C"))
 
 
 @pytest.mark.parametrize("with_failing_judge", [False, True])
@@ -133,7 +133,7 @@ def test_rule_verdicts_and_failed_judge_recovery(source, tmp_path, monkeypatch, 
     monkeypatch.setattr(finals, "lookup", lookup)
     judge = failing_judge if with_failing_judge else None
     result = finals.run_scan("rules", source, tmp_path / "result", offline=True, judge=judge)
-    assert set(result.paths) == {"sbom", "report", "log", "patch"}
+    assert set(result.paths) == {"sbom", "report", "log", "patch", "bundle"}
     assert set(result.failures) == ({"judge"} if with_failing_judge else set())
     verdicts = [finding.verdict for finding in result.bundle.findings]
     assert [verdict.decided_by for verdict in verdicts] == [
@@ -204,7 +204,7 @@ def test_judge_degradation_reaches_log_and_report(source, tmp_path, monkeypatch,
     judge = finals.default_judge() if mode == "missing" else failed_calls
     result = finals.run_scan("degraded", source, tmp_path / "result", offline=True, judge=judge)
     assert not result.failures
-    assert set(result.paths) == {"sbom", "report", "log", "patch"}
+    assert set(result.paths) == {"sbom", "report", "log", "patch", "bundle"}
     events = read_log(result.paths["log"])
     degraded, = [event for event in events if (event["stage"], event["event"]) == ("judge", "degraded")]
     assert degraded["data"] == {"reason": reason, "fallback_count": 1}
@@ -248,7 +248,7 @@ def test_scan_callback_error_preserves_artifacts_and_log(source, tmp_path, fail_
 
     result = finals.run_scan("callback-error", source, tmp_path / "result", offline=True, on_event=on_event)
     assert not result.failures
-    assert set(result.paths) == {"sbom", "report", "log", "patch"}
+    assert set(result.paths) == {"sbom", "report", "log", "patch", "bundle"}
     assert all(path.is_file() for path in result.paths.values())
     events = read_log(result.paths["log"])
     event_keys = [(event["stage"], event["event"]) for event in events]

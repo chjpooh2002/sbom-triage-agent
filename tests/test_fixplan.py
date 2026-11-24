@@ -122,7 +122,9 @@ def test_scan_applies_same_patch_and_compares_candidates(tmp_path, monkeypatch, 
 
     assert source.read_bytes() == before and calls == ["1.2.3", "1.3.0"]
     assert judge_calls == [root]
-    assert set(result.paths) == {"patch", "sbom", "report", "log"}
+    assert set(result.paths) == {"patch", "sbom", "report", "log", "bundle"}
+    saved = json.loads(result.paths["bundle"].read_text(encoding="utf-8"))
+    assert saved["meta"]["fix_check"] == result.bundle.meta["fix_check"]
     assert "+demo-lock-pin==1.3.0" in result.paths["patch"].read_text(encoding="utf-8")
     records = [json.loads(line) for line in result.paths["log"].read_text(encoding="utf-8").splitlines()]
     change = next(event["data"] for event in records if (event["stage"], event["event"]) == ("fixplan", "change"))
