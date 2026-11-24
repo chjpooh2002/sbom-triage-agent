@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from packaging.requirements import InvalidRequirement, Requirement
 from packaging.specifiers import InvalidSpecifier, SpecifierSet
 from packaging.utils import canonicalize_name
-from packaging.version import InvalidVersion
+from packaging.version import InvalidVersion, Version
 
 from .core import LocatedJSON, safe_file
 
@@ -119,7 +119,15 @@ def manifest_records(ctx, path, flavor):
         if isinstance(spec, dict):
             spec = spec.get("version", "")
         if isinstance(spec, str):
-            yield Record(canonicalize_name(name), spec, scope, doc.file, ctx.evidence(doc, line))
+            version = pin(spec)
+            if flavor == "poetry" and not version:
+                try:
+                    Version(spec)
+                except InvalidVersion:
+                    pass
+                else:
+                    version = spec
+            yield Record(canonicalize_name(name), spec, scope, doc.file, ctx.evidence(doc, line), version)
 
 
 def locked_records(ctx, path):
@@ -171,6 +179,8 @@ def collect_python(ctx, folder, files):
                                         ("Pipfile.lock", "Pipfile", "pipenv")):
         lock = folder / lock_name
         if not lock.is_file():
+            if flavor == "poetry" and (folder / manifest).is_file():
+                reqs.extend(manifest_records(ctx, folder / manifest, flavor))
             continue
         other = list(manifest_records(ctx, folder / manifest, flavor)) if (folder / manifest).is_file() else []
         try:

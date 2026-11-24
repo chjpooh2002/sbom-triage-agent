@@ -1,0 +1,16 @@
+<project>
+  <modelVersion>4.0.0</modelVersion>
+  <groupId>example.fixture</groupId>
+  <artifactId>fixplan-parent</artifactId>
+  <version>1.0.0</version>
+  <packaging>pom</packaging>
+  <modules><module>child</module></modules>
+  <properties><fixture.version>4.1.0</fixture.version></properties>
+  <dependencies>
+    <dependency>
+      <groupId>example.fixture</groupId>
+      <artifactId>demo-maven-pin</artifactId>
+      <version>${fixture.version}</version>
+    </dependency>
+  </dependencies>
+</project>

@@ -40,7 +40,7 @@ def register(adapter: Adapter):
 
 
 register(Adapter("npm", lambda p: p.name in {MANIFEST.name, LOCKFILE.name}, folders_npm, "folder"))
-register(Adapter("pypi", lambda p: p.match("requirements*.txt") or p.name in {"poetry.lock", "Pipfile.lock"},
+register(Adapter("pypi", lambda p: p.match("requirements*.txt") or p.name in {"pyproject.toml", "poetry.lock", "Pipfile.lock"},
                  folders_python, "folder"))
 register(Adapter("maven", lambda p: p.name == "pom.xml", collect_maven, "project"))
 register(Adapter("dockerfile", lambda p: p.name.lower() == "dockerfile" or p.name.lower().endswith(".dockerfile")

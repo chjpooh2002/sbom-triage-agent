@@ -11,11 +11,12 @@ from time import perf_counter
 from typing import Protocol
 
 from .collect import collect
+from .fixplan import FixCheckUnavailable, build_fix_plan, prepare_patch, recheck
 from .intel import enrich
 from .lookup import lookup
 from .models import Anomaly, Evidence, Finding, ItemResult, SourceFileScope, Status, TriageBundle, Verdict
 from .output import RunLog, render_pdf, write_cyclonedx
-from .output._common import artifact_evidence
+from .output._common import artifact_evidence, write_artifact
 from .priority import load_policy, prioritize
 from .remediation import remediate
 from .remediation.providers.template import TemplateProvider
@@ -125,11 +126,14 @@ def run_scan(
     log_path = out_dir / f"log-{label}-run{run_no}.jsonl"
     run_log = RunLog(log_path, on_event=on_event)
     lookup_misses = 0
+    lookup_truncated = False
 
     def log(stage: str, event: str, **data) -> None:
-        nonlocal lookup_misses
+        nonlocal lookup_misses, lookup_truncated
         if stage == "lookup" and (event == "cache_miss" or event == "request_unavailable"):
             lookup_misses += 1
+        if stage == "lookup" and event == "candidates_truncated":
+            lookup_truncated = True
         if event in {"start", "end"}:
             event = f"detail.{event}"
         run_log.emit(stage, event, **data)
@@ -139,6 +143,22 @@ def run_scan(
         return {"components": len(bundle.components), "candidates": len(bundle.findings), "files": len(bundle.files),
                 "verdicts": {state: verdicts[state] for state in VERDICT_STATUS},
                 "prioritized": len(bundle.results), "remediations": len(bundle.remediations)}
+
+    def scan_copy(copied_root: Path):
+        incomplete = False
+
+        def recheck_log(stage: str, event: str, **data) -> None:
+            nonlocal incomplete
+            if stage == "lookup" and event in {"cache_miss", "request_unavailable", "candidates_truncated"}:
+                incomplete = True
+            run_log.emit("fixplan", f"{stage}.{event}", **data)
+
+        collected = collect(copied_root, log=recheck_log, offline=offline)
+        scoped = apply_scope(copied_root, collected.components, log=recheck_log)
+        looked_up = lookup(scoped.components, offline=offline, log=recheck_log)
+        if incomplete:
+            raise FixCheckUnavailable("취약점 재조회 응답 또는 캐시가 불완전합니다.")
+        return scoped.components, looked_up.findings
 
     def record_failure(stage: str, error: Exception) -> None:
         error_type = type(error).__name__
@@ -221,6 +241,43 @@ def run_scan(
 
         with step("remediate"):
             remediate(bundle, TemplateProvider(), llm_limit=0, offline=offline, require_registry=True)
+
+        with step("fixplan"):
+            check_started = None
+            check = {"status": "skipped", "reason": "재점검 불가: 적용 가능한 변경안 없음",
+                     "before_candidates": len(bundle.findings), "after_candidates": None,
+                     "resolved": [], "remaining": [], "new": []}
+            bundle.meta.update(fix_plan=[], fix_check=check)
+            try:
+                plan = build_fix_plan(bundle, root)
+                bundle.meta["fix_plan"] = plan
+                patch, changes = prepare_patch(root, plan)
+                patch_path = out_dir / f"fix-{label}.patch"
+                write_artifact(patch_path, patch.encode("utf-8"))
+                paths["patch"] = patch_path
+                for item in plan:
+                    if item["kind"] == "change":
+                        run_log.emit("fixplan", "change", **item)
+                if changes:
+                    check_started = perf_counter()
+                    excluded = {patch_path.resolve(), log_path.resolve()}
+                    output = out_dir.resolve()
+                    if output != root and output.is_relative_to(root):
+                        excluded.add(output)
+                    if lookup_misses or lookup_truncated or "lookup" in failures:
+                        raise FixCheckUnavailable("기준 취약점 조회 응답 또는 캐시가 불완전합니다.")
+                    check.update(recheck(root, changes, bundle, plan, scan_copy, exclude=excluded), status="ok", reason=None)
+            except FixCheckUnavailable as error:
+                check.update(status="unavailable", reason=f"재점검 불가: {error}")
+            except Exception as error:
+                check.update(status="unavailable", reason=f"재점검 불가: {type(error).__name__}")
+                raise
+            finally:
+                seconds = round(perf_counter() - check_started, 6) if check_started is not None else 0.0
+                run_log.emit("fixplan", "check", status=check["status"], reason=check["reason"],
+                             before_candidates=check["before_candidates"], after_candidates=check["after_candidates"],
+                             resolved=len(check["resolved"]), remaining=len(check["remaining"]), new=len(check["new"]),
+                             new_findings=check["new"], seconds=seconds)
 
         sbom_path = out_dir / f"sbom-{label}.json"
         with step("cyclonedx"):

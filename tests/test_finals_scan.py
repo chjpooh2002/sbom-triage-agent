@@ -34,13 +34,13 @@ def test_scan_command_writes_submission_files(source, tmp_path, monkeypatch):
     out = tmp_path / "result"
     result = CliRunner().invoke(app, ["scan", "demo", str(source), str(out), "--offline", "--run", "2"])
     assert result.exit_code == 0, result.output
-    assert {p.name for p in out.iterdir()} == {"sbom-demo.json", "report-demo.pdf", "log-demo-run2.jsonl"}
+    assert {p.name for p in out.iterdir()} == {"sbom-demo.json", "report-demo.pdf", "log-demo-run2.jsonl", "fix-demo.patch"}
     document = json.loads((out / "sbom-demo.json").read_text(encoding="utf-8"))
     assert document["components"][0]["name"] == "example-scan-library"
     assert (out / "report-demo.pdf").read_bytes().startswith(b"%PDF-")
 
     events = read_log(out / "log-demo-run2.jsonl")
-    stages = ("collect", "scope", "lookup", "judge", "enrich", "priority", "remediate", "cyclonedx", "pdf")
+    stages = ("collect", "scope", "lookup", "judge", "enrich", "priority", "remediate", "fixplan", "cyclonedx", "pdf")
     assert [(e["stage"], e["event"]) for e in events if e["stage"] in stages and e["event"] in {"start", "end"}] == [
         (stage, event) for stage in stages for event in ("start", "end")
     ]
@@ -133,7 +133,7 @@ def test_rule_verdicts_and_failed_judge_recovery(source, tmp_path, monkeypatch, 
     monkeypatch.setattr(finals, "lookup", lookup)
     judge = failing_judge if with_failing_judge else None
     result = finals.run_scan("rules", source, tmp_path / "result", offline=True, judge=judge)
-    assert set(result.paths) == {"sbom", "report", "log"}
+    assert set(result.paths) == {"sbom", "report", "log", "patch"}
     assert set(result.failures) == ({"judge"} if with_failing_judge else set())
     verdicts = [finding.verdict for finding in result.bundle.findings]
     assert [verdict.decided_by for verdict in verdicts] == [
@@ -204,7 +204,7 @@ def test_judge_degradation_reaches_log_and_report(source, tmp_path, monkeypatch,
     judge = finals.default_judge() if mode == "missing" else failed_calls
     result = finals.run_scan("degraded", source, tmp_path / "result", offline=True, judge=judge)
     assert not result.failures
-    assert set(result.paths) == {"sbom", "report", "log"}
+    assert set(result.paths) == {"sbom", "report", "log", "patch"}
     events = read_log(result.paths["log"])
     degraded, = [event for event in events if (event["stage"], event["event"]) == ("judge", "degraded")]
     assert degraded["data"] == {"reason": reason, "fallback_count": 1}
@@ -248,7 +248,7 @@ def test_scan_callback_error_preserves_artifacts_and_log(source, tmp_path, fail_
 
     result = finals.run_scan("callback-error", source, tmp_path / "result", offline=True, on_event=on_event)
     assert not result.failures
-    assert set(result.paths) == {"sbom", "report", "log"}
+    assert set(result.paths) == {"sbom", "report", "log", "patch"}
     assert all(path.is_file() for path in result.paths.values())
     events = read_log(result.paths["log"])
     event_keys = [(event["stage"], event["event"]) for event in events]
