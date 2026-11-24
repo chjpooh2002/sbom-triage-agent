@@ -5,6 +5,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+import httpx
 import pytest
 
 
@@ -42,14 +43,18 @@ def _runner_env(tmp_path, code):
     return {"PYTHONPATH": str(tmp_path)}
 
 
-def _write_advisory(cache, identifier, *, package="widget", kind="ECOSYSTEM", events=None):
-    snapshot = cache / "2040-01-01"
-    snapshot.mkdir(parents=True, exist_ok=True)
-    doc = {
+def _advisory(identifier, *, package="widget", kind="ECOSYSTEM", events=None):
+    return {
         "id": f"OSV-{identifier}", "aliases": [identifier],
         "affected": [{"package": {"ecosystem": "PyPI", "name": package},
                       "ranges": [{"type": kind, "events": events or [{"introduced": "0"}, {"fixed": "2.0"}]}]}],
     }
+
+
+def _write_advisory(cache, identifier, **fields):
+    snapshot = cache / "2040-01-01"
+    snapshot.mkdir(parents=True, exist_ok=True)
+    doc = _advisory(identifier, **fields)
     (snapshot / f"osv-vuln-{identifier}.json").write_text(json.dumps(doc), encoding="utf-8")
 
 
@@ -191,6 +196,73 @@ def test_missing_candidates_need_cached_osv_range_to_count_as_excluded(tmp_path)
     exclusions = table.split("## 버전 범위 밖 제외 (2)")[1].split("\n## ")[0]
     assert "FICT-FIXED / Widget @ 2.0 (pinned) (OSV OSV-FICT-FIXED)" in exclusions
     assert "FICT-BEFORE / Widget @ 2.0 (OSV OSV-FICT-BEFORE)" in exclusions
+
+
+def test_fetch_missing_uses_mock_http_and_reuses_saved_details(tmp_path, monkeypatch, capsys):
+    monkeypatch.syspath_prepend(str(REPO))
+    from eval import finals_score
+
+    cache = tmp_path / "cache"
+    _write_advisory(cache, "FICT-CACHED")
+    gold = tmp_path / "gold.csv"
+    with gold.open("w", encoding="utf-8", newline="") as stream:
+        writer = csv.writer(stream)
+        writer.writerow(("service", "vuln_id", "aliases", "component", "expected_state", "scoring_set", "version"))
+        for identifier, aliases, subset, version in (
+            ("FICT-PRESENT", "", "core", "3.0"),
+            ("FICT-CACHED", "", "core", "3.0"),
+            ("FICT-FETCH", "", "core", "3.0"),
+            ("FICT-WITH-ALIAS", "FICT-ALTERNATE", "core", "3.0"),
+            ("FICT-UNAVAILABLE", "FICT-NO-RETRY", "core", "3.0"),
+            ("FICT-UNAVAILABLE", "FICT-NO-RETRY", "core", "4.0"),
+            ("FICT-BAD", "", "core", "3.0"),
+            ("FICT-AUX", "", "aux", "3.0"),
+        ):
+            writer.writerow((SERVICE, identifier, aliases, "Widget", "not_affected", subset, version))
+    sbom = tmp_path / "sbom-T.json"
+    _write_sbom(sbom, [{"type": "library", "bom-ref": "dep", "name": "Widget"}],
+                [_vex("FICT-PRESENT", "not_affected")])
+
+    requests = []
+    statuses = {"FICT-FETCH": 200, "FICT-WITH-ALIAS": 404, "FICT-ALTERNATE": 200,
+                "FICT-UNAVAILABLE": 503, "FICT-BAD": 200}
+
+    def respond(request):
+        assert request.method == "GET" and request.url.host == "api.osv.dev"
+        path, _, identifier = request.url.path.rpartition("/")
+        assert path == "/v1/vulns"
+        requests.append(identifier)
+        payload = _advisory("FICT-UNRELATED" if identifier == "FICT-BAD" else identifier)
+        return httpx.Response(statuses[identifier], json=payload)
+
+    client_type = httpx.Client
+    monkeypatch.setattr(httpx, "Client", lambda **kwargs: client_type(transport=httpx.MockTransport(respond), **kwargs))
+    argv = ["finals_score", "T", "--gold", str(gold), "--sbom", str(sbom), "--out", str(tmp_path),
+            "--osv-cache", str(cache)]
+    monkeypatch.setattr(sys, "argv", argv)
+    finals_score.main()
+    initial = capsys.readouterr().out
+    assert not requests
+    assert "| core 정확 일치율 (버전 제외 인정) | 28.6% (2/7) |" in initial
+    assert "## 누락 OSV 상세 권고 조회" not in initial
+
+    monkeypatch.setattr(sys, "argv", [*argv, "--fetch-missing"])
+    finals_score.main()
+    report = capsys.readouterr().out
+    assert requests == list(statuses)
+    assert "| core 정확 일치율 (엄격) | 14.3% (1/7) |" in report
+    assert "| core 정확 일치율 (버전 제외 인정) | 57.1% (4/7) |" in report
+    assert "- 받은 ID (2) — OSV-FICT-ALTERNATE, OSV-FICT-FETCH" in report
+    assert "- 실패한 ID (3) — FICT-BAD, FICT-UNAVAILABLE, FICT-WITH-ALIAS" in report
+    assert (tmp_path / "score-T.md").read_text(encoding="utf-8") == report
+    saved = [json.loads(path.read_text(encoding="utf-8")) for path in (cache / "eval").glob("osv-vuln-*.json")]
+    assert {doc["id"] for doc in saved} == {"OSV-FICT-FETCH", "OSV-FICT-ALTERNATE"}
+
+    requests.clear()
+    monkeypatch.setattr(sys, "argv", argv)
+    finals_score.main()
+    assert "| core 정확 일치율 (버전 제외 인정) | 57.1% (4/7) |" in capsys.readouterr().out
+    assert not requests
 
 
 def test_saved_ablation_writes_csv_and_reads_judge_and_run_totals(tmp_path, saved_runs):
