@@ -1,0 +1,20 @@
+# 판단 유보 항목의 작업 요청(WorkRequest)을 받을 팀을 정하는 규칙.
+# 위에서부터 차례로 보고 처음 맞는 규칙을 쓴다.
+#   kinds:    점검 항목 종류(api_use | input_source | config | platform | deployment | other)
+#   keywords: '필요한 정보'나 '확인 위치' 문구에 들어 있으면 맞는 것으로 보는 낱말(대소문자 무시)
+# 어느 규칙에도 맞지 않으면 default 팀으로 보낸다.
+
+rules:
+  - team: 인프라·플랫폼팀
+    kinds: [platform, deployment]
+    keywords: [기반 이미지, 컨테이너, 운영체제, 런타임, 패치 버전, 이미지 태그, 쿠버네티스, 매니페스트, 네트워크, 방화벽, 인터넷 노출, 로드밸런서, 게이트웨이, 프록시, nginx]
+  - team: 운영팀
+    kinds: [config]
+    keywords: [운영 설정, 환경변수, 활성 프로파일, 배포 설정값, 기능 플래그]
+  - team: 보안팀
+    keywords: [보안 정책, 인증서, 키 관리, WAF, 접근 통제]
+  - team: 개발팀
+    kinds: [api_use, input_source, other]
+    keywords: [코드, 호출, 입력, 요청 처리]
+
+default: 개발팀

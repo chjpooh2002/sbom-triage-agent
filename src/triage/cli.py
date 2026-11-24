@@ -198,6 +198,32 @@ def remediate(
 
 
 @app.command()
+def scan(
+    label: str = typer.Argument(..., help="산출물 이름에 사용할 라벨"),
+    root: Path = typer.Argument(..., help="점검할 소스 디렉터리"),
+    out_dir: Path = typer.Argument(..., help="산출물 디렉터리"),
+    offline: bool = typer.Option(False, "--offline", help="외부 의존성과 권고문 조회에 캐시만 사용"),
+    run_no: int = typer.Option(1, "--run", min=1, help="실행 로그 번호"),
+) -> None:
+    """소스 디렉터리를 점검해 SBOM, PDF 보고서, 실행 로그를 만든다."""
+    from .finals import default_judge, run_scan
+
+    judge = default_judge()
+    try:
+        result = run_scan(label, root, out_dir, offline=offline, run_no=run_no, judge=judge)
+    except (ValueError, OSError) as error:
+        typer.secho(str(error), err=True, fg=typer.colors.RED)
+        raise typer.Exit(1) from error
+
+    for path in result.paths.values():
+        typer.echo(path)
+    if result.failures:
+        for reason in result.failures.values():
+            typer.secho(reason, err=True, fg=typer.colors.RED)
+        raise typer.Exit(1)
+
+
+@app.command()
 def run(
     inputs: list[str] = typer.Argument(..., help="입력 파일·폴더. 자산 직접 지정은 '경로=자산ID'"),
     out_dir: Path = typer.Option(Path("out"), "-o", "--out-dir"),

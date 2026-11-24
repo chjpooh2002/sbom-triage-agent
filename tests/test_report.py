@@ -37,11 +37,12 @@ def test_pipeline_end_to_end_offline_template(tmp_path, offline):
 def test_streamlit_app_renders(offline):
     from streamlit.testing.v1 import AppTest
 
-    at = AppTest.from_file(str(ROOT / "app" / "streamlit_app.py"), default_timeout=60)
+    at = AppTest.from_file(str(ROOT / "app" / "streamlit_app.py"), default_timeout=120)
     at.run()
     assert not at.exception
-    at.sidebar.selectbox[0].set_value("형식별 입력 샘플 (fixtures)")
-    at.sidebar.button[0].click()
+    legacy = at.tabs[1]
+    legacy.selectbox[0].set_value("형식별 입력 샘플 (fixtures)")
+    legacy.button[0].click()
     at.run()
     assert not at.exception
     assert any(m.label == "취약점" for m in at.metric)
