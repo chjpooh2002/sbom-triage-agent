@@ -175,12 +175,17 @@ def write_cyclonedx(bundle: TriageBundle, project: dict, out: Path) -> list[Evid
             root[field] = value
     evidence = artifact_evidence("cyclonedx", out, "CycloneDX 1.6 공식 스키마 검증 완료", bundle)
     sources = {item.id: item for item in bundle.evidence}
+    anomaly_refs = [ref for anomaly in bundle.anomalies for ref in anomaly.evidence_ids]
+    metadata_properties = _evidence_properties({**sources, evidence.id: evidence}, [evidence.id, *anomaly_refs])
+    for anomaly in bundle.anomalies:
+        refs = f" [{', '.join(anomaly.evidence_ids)}]" if anomaly.evidence_ids else ""
+        metadata_properties.extend(_properties(**{f"anomaly:{anomaly.kind}": f"{anomaly.message}{refs}"}))
     document = Redactor().value({
         "$schema": _SCHEMA_URL, "bomFormat": "CycloneDX", "specVersion": "1.6", "version": 1,
         "metadata": {
             "component": root,
             "tools": {"components": [{"type": "application", "name": "triage", "version": version("triage")}]},
-            "properties": _evidence_properties({evidence.id: evidence}, [evidence.id]),
+            "properties": metadata_properties,
         },
         "components": [_component(item, sources) for item in components.values()],
         "dependencies": _dependencies(root_ref, components),

@@ -143,6 +143,7 @@ class Responses:
                     self.emit("request_error", source=source, url=url, attempt=attempt,
                               status=status, error=type(exc).__name__, retry_in_seconds=delay)
                     if not transient:
+                        self.emit("request_unavailable", source=source, url=url, status=status)
                         return None, ""
                     if not retry:
                         break

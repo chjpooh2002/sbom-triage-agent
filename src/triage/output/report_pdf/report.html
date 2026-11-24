@@ -70,7 +70,9 @@
       {% for items in groups.values() %}<td>{{ items | length }}건</td>{% endfor %}
     </tr></tbody>
   </table>
-  {% if not findings_count %}
+  {% if meta.get('incomplete_coverage') %}
+    <p class="notice">일부 점검 근거를 확보하지 못했습니다. 아래 집계는 확보한 결과 기준입니다.</p>
+  {% elif not findings_count %}
     <p class="notice">점검 범위 내 취약점 후보가 0건입니다. 이번 점검에서 확인된 조치 대상이 없습니다.</p>
   {% elif groups.not_affected | length == findings_count %}
     <p class="notice">확인한 취약점 후보 {{ findings_count }}건은 모두 영향 없음으로 판정했습니다. 이번 점검에서 확인된 조치 대상이 없습니다.</p>
