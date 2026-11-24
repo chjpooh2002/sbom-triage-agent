@@ -321,7 +321,10 @@ def test_pdf_extracts_korean_report_and_work_request(bundle, tmp_path):
     extracted = _pdf_text(bundle, tmp_path / "report.pdf", lookup_sources=[
         {"name": "lookup.example.com", "retrieved_at": "2026-01-03T12:00:00Z"},
     ])
-    assert 1 <= extracted.count("\f") <= 5
+    first_page, _, following = extracted.partition("\f")
+    summary = " ".join(first_page.split())
+    assert "1. 점검 대상·범위" in following
+    assert "1. 점검 대상·범위" not in summary
     text = " ".join(extracted.split())
     for phrase in (
         "취약점 조치 보고서", "한글 예제 프로젝트", "영향 있음", "영향 없음", "판단 유보",
@@ -344,9 +347,11 @@ def test_pdf_extracts_korean_report_and_work_request(bundle, tmp_path):
         assert unrelated not in citations
     assert "unreferenced.fixture" not in text
 
-    summary = main[main.index("먼저 고칠 것 1개"):main.index("입력 이상")]
+    assert "오늘 할 일 1개 · 영향 있음 1 · 확인 필요 1 · 영향 없음 1" in summary
     assert "fixture-parser@1.0 업그레이드 · 관련 취약점 2건" in summary
-    assert "P1 · 목표 버전 1.2" in summary
+    assert "목표 버전 1.2 · P1" in summary
+    for phrase in ("무엇을", "왜", "어떻게", "확인", "잠금 파일을 갱신합니다.", "재점검 전", "uv run triage scan"):
+        assert phrase in summary
     assert "FIXTURE-1" not in summary
     assert "FIXTURE-2" not in summary
     assert "점검 일부 실패: judge" in summary
@@ -378,8 +383,8 @@ def test_pdf_extracts_korean_report_and_work_request(bundle, tmp_path):
 def test_pdf_explicitly_describes_no_action_states(bundle, only_not_affected, tmp_path):
     bundle.findings = [bundle.findings[1]] if only_not_affected else []
     text = " ".join(_pdf_text(bundle, tmp_path / "report.pdf").split())
-    assert "먼저 고칠 것 — 영향 있음 확정 항목 없음" in text
-    assert "먼저 고칠 것 3개" not in text
+    assert "먼저 확인할 것" in text
+    assert "오늘 할 일 0개 · 영향 있음 0" in text
     assert "이번 점검에서 확인된 조치 대상이 없습니다." in text
     expected = "모두 영향 없음으로 판정했습니다." if only_not_affected else "취약점 후보가 0건입니다."
     assert expected in text
@@ -399,8 +404,12 @@ def test_pdf_uses_same_actions_in_summary_plan_and_verification(tmp_path):
     bundle.findings.append(extra)
     actions = build_actions(bundle)
     assert len(actions) == 4
-    text = " ".join(_pdf_text(bundle, tmp_path / "report.pdf").split())
-    top = text.split("먼저 고칠 것 3개", 1)[1].split("입력 이상", 1)[0]
+    extracted = _pdf_text(bundle, tmp_path / "report.pdf")
+    top = " ".join(extracted.split("\f", 1)[0].split())
+    assert "먼저 고칠 것 3개" in top
+    assert "오늘 할 일 4개" in top
+    assert "다시 실행" in top and "uv run triage scan" in top
+    text = " ".join(extracted.split())
     decisions, rest = text.split("2. 취약점 후보별 판정 및 근거", 1)[1].split("3. 조치 항목 및 우선순위", 1)
     plan, verification = rest.split("4. 검증 계획", 1)
     verification = verification.split("5. 점검 한계", 1)[0]
@@ -420,3 +429,45 @@ def test_pdf_uses_same_actions_in_summary_plan_and_verification(tmp_path):
                 assert f"목표 버전 후보 {action.target} (확인 필요)" in card
             assert all(ref in card for ref in action.evidence_ids)
     assert "활성 옵션 · 확인 위치 배포 설정" in verification
+
+
+def test_summary_uses_matching_edits_and_scan_wide_check(tmp_path):
+    fixture = Path(__file__).parent / "fixtures/finals/action_bundle.json"
+    bundle = TriageBundle.model_validate_json(fixture.read_text(encoding="utf-8"))
+    component = bundle.components[0].id
+    bundle.meta.update(
+        fix_plan=[
+            {"component": component, "target": "1.8", "findings": ["finding-1", "finding-2"],
+             "kind": "change", "file": "deps.toml", "line": 7, "before": 'lib = "<1.1"',
+             "after": 'lib = "1.8"', "evidence_ids": ["E1"]},
+            {"component": bundle.components[1].id, "target": "4.8.10", "findings": ["finding-4"],
+             "kind": "change", "file": "container/Dockerfile", "line": 2,
+             "before": "FROM old-image  # " + "긴 원본 주석 " * 20,
+             "after": "FROM new-image  # " + "긴 원본 주석 " * 20, "evidence_ids": ["E2"]},
+            {"component": component, "target": "", "findings": ["finding-3"], "kind": "manual",
+             "reason": "상위 패키지 선언을 먼저 확인하세요."},
+        ],
+        fix_check={"status": "ok", "reason": None, "before_candidates": 7, "after_candidates": 6,
+                   "resolved": ["finding-1", "finding-2"], "remaining": list("abcde"), "new": ["f"]},
+    )
+    pages = _pdf_text(bundle, tmp_path / "report.pdf", label="sample", scan_source="src dir",
+                      scan_offline=True).split("\f")
+    cover = " ".join(pages[0].split())
+    first, rest = cover.split("2. 기반 이미지")
+    assert 'deps.toml:7 lib = "<1.1" → lib = "1.8"' in first
+    assert "deps.toml" not in rest
+    assert "변경안 목표 1.8" in first
+    assert "3절 할 일 2의 변경 원문 참조" in rest
+    assert "FROM old-image" in " ".join(pages[1:])
+    assert "FROM new-image" in " ".join(pages[1:])
+    assert "수동 확인 · 상위 패키지 선언을 먼저 확인하세요." in rest
+    assert "전체 후보 · 해소 2건 · 남음 5건 · 새로 생김 1건" in cover
+    assert cover.count("uv run triage scan --offline -- sample 'src dir' out/recheck") == 3
+    assert "입력 이상" in pages[1]
+
+
+@pytest.mark.parametrize("status", ["skipped", "unavailable"])
+def test_unavailable_fix_check_does_not_claim_zero_candidates(bundle, status):
+    bundle.meta["fix_check"] = {"status": status, "reason": "대상 버전 미확인",
+                                "resolved": [], "remaining": [], "new": []}
+    assert _context(bundle, {})["check_summary"] == "대상 버전 미확인"
