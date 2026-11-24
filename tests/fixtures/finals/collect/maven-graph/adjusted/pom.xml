@@ -1,5 +1,11 @@
 <project>
   <parent><groupId>org.fixture</groupId><artifactId>gearbox</artifactId><version>1.0</version></parent>
   <artifactId>adjusted</artifactId>
-  <properties><bearing.version>2.9.0</bearing.version></properties>
+  <properties>
+    <bearing.version>2.9.0</bearing.version>
+    <bom.version>2.1</bom.version>
+  </properties>
+  <dependencies>
+    <dependency><groupId>org.fixture</groupId><artifactId>lathe</artifactId></dependency>
+  </dependencies>
 </project>
