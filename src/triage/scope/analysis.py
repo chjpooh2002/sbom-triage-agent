@@ -75,6 +75,8 @@ class Build:
         self.context: dict[str, Origin] = {}
         self.text: dict[str, str | None] = {}
         self.final_files: dict[str, Origin] = {}
+        self.final_context_copies: dict[str, int] = {}
+        self.final_context_files: dict[str, Origin] = {}
         self.maven_files: dict[str, tuple[str, ...]] = {}
         self.copy_refs: tuple[str, ...] = ()
 
@@ -113,9 +115,11 @@ class Build:
 
     def interpret(self, content: str) -> Stage | None:
         self.context_files()
+        commands = list(instructions(content))
+        final_from = next((command.line.start for command in reversed(commands) if command.op == "FROM"), 0)
         current: Stage | None = None
         index = 0
-        for instruction in instructions(content):
+        for instruction in commands:
             if instruction.op not in {"FROM", "COPY", "ADD", "WORKDIR", "RUN", "ENV", "ONBUILD", "SHELL"}:
                 continue
             line = instruction.line
@@ -144,7 +148,7 @@ class Build:
                         self.stages[fields[2].lower()] = current
                     index += 1
                 elif current is not None:
-                    self.instruction(current, instruction, ref)
+                    self.instruction(current, instruction, ref, final_stage=instruction.line.start > final_from)
             except (ValueError, IndexError, re.error):
                 if instruction.op == "FROM":
                     current = Stage("", ref, ref, uncertain=[ref])
@@ -154,9 +158,9 @@ class Build:
             current.uncertain.append(self.cite("config", self.ignore_file, note="제외 규칙을 읽을 수 없음"))
         return current
 
-    def instruction(self, stage: Stage, command: Instruction, ref: str) -> None:
+    def instruction(self, stage: Stage, command: Instruction, ref: str, *, final_stage: bool) -> None:
         if command.op in {"COPY", "ADD"}:
-            self.copy(stage, command, ref)
+            self.copy(stage, command, ref, final_stage=final_stage)
         elif command.op == "WORKDIR":
             args = words(command.args)
             if len(args) != 1 or "$" in args[0]:
@@ -179,7 +183,7 @@ class Build:
         elif command.op in {"ONBUILD", "SHELL"}:
             stage.uncertain.append(ref)
 
-    def copy(self, stage: Stage, command: Instruction, ref: str) -> None:
+    def copy(self, stage: Stage, command: Instruction, ref: str, *, final_stage: bool) -> None:
         args = command.args
         source_stage = None
         while args.startswith("--"):
@@ -197,6 +201,7 @@ class Build:
         dest_path = container_path(dest, stage.cwd)
         directory = dest.endswith("/") or dest_path in stage.dirs or len(sources) > 1
         files = self.context if source_stage is None else source_stage.files
+        copies_context = final_stage and source_stage is None and sources in (["."], ["./"])
         if source_stage is not None:
             stage.uncertain.extend(source_stage.uncertain)
             stage.transfers[source_stage.base_ref] = ref
@@ -210,7 +215,7 @@ class Build:
             matched = list(matches(files, pattern))
             to_dir = directory or len({anchor for anchor, _ in matched}) > 1
             for anchor, path in matched:
-                if command.op == "ADD" and source_stage is None and _tar(self.root / files[path].path):
+                if command.op == "ADD" and source_stage is None and not copies_context and _tar(self.root / files[path].path):
                     stage.uncertain.append(ref)
                     continue
                 target = _destination(dest_path, to_dir, anchor, path)
@@ -220,6 +225,8 @@ class Build:
                 stage.dirs.update(str(parent) for parent in PurePosixPath(target).parents)
             if source_stage is not None:
                 self.copy_installs(stage, source_stage, pattern, dest_path, to_dir, ref)
+        if copies_context:
+            self.final_context_copies[ref] = len(stage.uncertain)
 
     def copy_installs(self, stage: Stage, source: Stage, pattern: str, dest: str, directory: bool, ref: str) -> None:
         for install in source.installs:
@@ -522,11 +529,11 @@ def _component_decision(component: Component, stage: Stage, build: Build) -> Dec
 def _file_decision(path: str, stage: Stage, build: Build) -> Decision:
     if path in build.excluded:
         return "no", "Docker 빌드 컨텍스트에서 복사할 수 없는 파일", (build.excluded[path],)
-    if stage.uncertain:
+    copied = (build.final_context_files if stage.uncertain else build.final_files).get(path)
+    if stage.uncertain and not copied:
         return "unknown", _UNKNOWN_BUILD, (stage.ref, *stage.uncertain)
     if archived := build.maven_files.get(path):
         return "yes", "Maven 빌드 산출물로 포함", (stage.ref, *archived)
-    copied = build.final_files.get(path)
     if copied:
         return "yes", "최종 Docker 스테이지에 파일이 복사됨", (stage.ref, *copied.refs)
     return "no", "최종 Docker 스테이지에 원본 파일이 남는 경로가 없음", (stage.ref, *build.copy_refs)
@@ -584,6 +591,12 @@ def apply_scope(root: Path, components: list[Component], log: Callable[..., None
         fallback: Decision = ("unknown", reason, (build.cite("build", note=reason),))
     else:
         build.final_files = {origin.path: origin for origin in stage.files.values()}
+        if stage.uncertain and build.final_context_copies:
+            # 이후에 불확실한 명령이 추가되지 않은 전체 복사본만 남은 파일로 확인한다.
+            build.final_context_files = {
+                origin.path: origin for origin in stage.files.values()
+                if origin.refs and build.final_context_copies.get(origin.refs[-1]) == len(stage.uncertain)
+            }
         for artifact in stage.installs:
             if artifact.kind == "maven" and artifact.refs:
                 for origin in artifact.maven_inputs:

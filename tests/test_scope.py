@@ -1,10 +1,19 @@
 """C2 공개 API의 정적 배포 판정과 근거 연결을 검증한다."""
+import io
+import json
+import os
+import subprocess
+import sys
+import zipfile
 from pathlib import Path
+
+import pytest
 
 from triage.models import Component
 from triage.scope import apply_scope
 
 FIXTURES = Path(__file__).parent / "fixtures" / "finals"
+REPO = Path(__file__).resolve().parents[1]
 
 
 def _assert_evidence(result):
@@ -112,3 +121,94 @@ def test_unresolved_build_paths_are_unknown():
     files = {item.path: item for item in result.files}
     assert files["example.py"].deployed == "unknown"
     _assert_evidence(result)
+
+
+@pytest.mark.parametrize("copy", ["COPY .", "COPY ./", "ADD ."])
+def test_final_context_copy_respects_dockerignore_after_unmodeled_run(tmp_path, copy):
+    (tmp_path / "Dockerfile").write_text(
+        f"FROM alpine AS builder\nCOPY . /build/\nFROM alpine\nRUN configure-image\n{copy} /app/\n",
+        encoding="utf-8",
+    )
+    (tmp_path / ".dockerignore").write_text("excluded/\n*.tmp\n!keep.tmp\n!excluded/keep.py\n", encoding="utf-8")
+    for relative in ("app/main.py", "excluded/discard.py", "excluded/keep.py", "cache.tmp", "keep.tmp"):
+        file = tmp_path / relative
+        file.parent.mkdir(parents=True, exist_ok=True)
+        file.write_text("", encoding="utf-8")
+    # 디렉터리의 압축 파일은 ADD의 개별 아카이브 입력으로 해석되지 않는다.
+    (tmp_path / "archive.tar").write_bytes(b"\x1f\x8b")
+
+    result = apply_scope(tmp_path, [])
+    files = {item.path: item for item in result.files}
+    for path in ("app/main.py", "excluded/keep.py", "keep.tmp", "archive.tar"):
+        assert files[path].deployed == "yes"
+    for path in ("excluded/discard.py", "cache.tmp", "Dockerfile", ".dockerignore"):
+        assert files[path].deployed == "no"
+    refs = {item.id: item for item in result.evidence}
+    assert any(refs[ref].snippet == f"{copy} /app/" for ref in files["app/main.py"].evidence_ids)
+    assert any(refs[ref].file == ".dockerignore" for ref in files["excluded/discard.py"].evidence_ids)
+    _assert_evidence(result)
+
+
+@pytest.mark.parametrize(("builder_copy", "final_copy"), [
+    ("COPY . /build/", "COPY --from=builder /build/asset.txt /out/"),
+    ("COPY asset.txt /build/asset.txt", "COPY --from=builder . /out/"),
+])
+def test_copy_from_builder_only_transfers_selected_stage_files(tmp_path, builder_copy, final_copy):
+    (tmp_path / "Dockerfile").write_text(
+        f"FROM alpine AS builder\n{builder_copy}\nFROM alpine\n{final_copy}\n", encoding="utf-8",
+    )
+    (tmp_path / "asset.txt").write_text("", encoding="utf-8")
+    (tmp_path / "unrelated.py").write_text("", encoding="utf-8")
+
+    result = apply_scope(tmp_path, [])
+    assert {item.path: item.deployed for item in result.files} == {
+        "Dockerfile": "no", "asset.txt": "yes", "unrelated.py": "no",
+    }
+
+
+@pytest.mark.parametrize("commands", [
+    "RUN configure-image\nCOPY app/ ./app/\n",
+    "RUN configure-image\nCOPY app/main.py /app/main.py\n",
+    "COPY . /app/\nRUN modify-image\n",
+])
+def test_scope_keeps_uncertainty_for_partial_copies_and_later_commands(tmp_path, commands):
+    (tmp_path / "Dockerfile").write_text(f"FROM alpine\n{commands}", encoding="utf-8")
+    (tmp_path / "app").mkdir()
+    (tmp_path / "app" / "main.py").write_text("", encoding="utf-8")
+
+    result = apply_scope(tmp_path, [])
+    assert {item.path: item.deployed for item in result.files}["app/main.py"] == "unknown"
+
+
+def _baseline_file_scopes(roots, tmp_path):
+    archive = subprocess.check_output(["git", "archive", "--format=zip", "36dddc7", "src/triage/scope"], cwd=REPO)
+    with zipfile.ZipFile(io.BytesIO(archive)) as snapshot:
+        snapshot.extractall(tmp_path)
+    script = """\
+import json
+import sys
+from pathlib import Path
+
+import triage
+triage.__path__.insert(0, sys.argv[1])
+from triage.scope import apply_scope
+
+print(json.dumps([[item.model_dump() for item in apply_scope(Path(root), []).files] for root in sys.argv[2:]]))
+"""
+    baseline = subprocess.check_output(
+        [sys.executable, "-c", script, str(tmp_path / "src" / "triage"), *map(str, roots)],
+        cwd=REPO, encoding="utf-8",
+    )
+    return json.loads(baseline)
+
+
+def test_field_samples_scope_matches_36dddc7(tmp_path):
+    sample_dir = os.environ.get("SBOMTRIAGE_SCOPE_SAMPLES")
+    if not sample_dir:
+        pytest.skip("외부 A·B·C 샘플 폴더는 SBOMTRIAGE_SCOPE_SAMPLES로 지정")
+    roots = sorted(path for path in Path(sample_dir).resolve().iterdir() if path.is_dir())
+    assert len(roots) == 3 and all((path / "Dockerfile").is_file() for path in roots)
+
+    for root, expected in zip(roots, _baseline_file_scopes(roots, tmp_path), strict=True):
+        actual = [item.model_dump() for item in apply_scope(root, []).files]
+        assert actual and actual == expected, root.name
