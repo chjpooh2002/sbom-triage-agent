@@ -33,7 +33,7 @@ _LOOKUP_NAMES = {
 
 
 # A4 인쇄용 표시 한도. 원문과 초과 항목은 부록에 둔다.
-LIMIT = dict(board=8, cards=3, plans=10, teams=3, ranges=3, snippet_lines=3,
+LIMIT = dict(board=8, cards=3, plans=8, teams=3, ranges=3, snippet_lines=3,
              summary_chars=100, team_lines=10, team_columns=92, command_columns=160,
              board_component=31, board_location=32, board_team=22, plan_text=85, citation_ids=8,
              badge=24, range=26, id=34, label=48, location=64, condition=80, line=90,
