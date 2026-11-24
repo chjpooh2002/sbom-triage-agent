@@ -30,11 +30,11 @@ CHECKLIST_JSON = {"vulnerable_entry_points": ["xmlkit.parse_entities"], "items":
 CHECKLIST = Checklist(vuln_id="VULN-TEST-1", items=[ConditionItem(**i) for i in CHECKLIST_JSON["items"]])
 
 
-def finding(in_range=True, deployed="yes", fixed=("2.4.1",)) -> Finding:
+def finding(in_range=True, deployed="yes", fixed=("2.4.1",), severity="") -> Finding:
     c = Component(id="pkg:pypi/xmlkit@2.3.0", name="xmlkit", version="2.3.0", ecosystem="pypi",
                   deployed=deployed, deployed_reason="테스트", evidence_ids=["collect-0001"])
     v = Vulnerability(id="VULN-TEST-1", title="엔티티 해석", description="parse_entities 가 외부 엔티티를 해석한다.",
-                      fixed_versions=list(fixed), affected_ranges=["<2.4.1"])
+                      fixed_versions=list(fixed), affected_ranges=["<2.4.1"], severity=severity)
     return Finding(key=Finding.make_key(v.id, c.id, None), component=c, vulnerability=v,
                    version_in_range=in_range, hints={"evidence_ids": ["lookup-0001"]})
 
@@ -178,16 +178,17 @@ def test_justification_missing(store):
 class Fake:
     """schema 이름별로 정해 둔 응답을 돌려주는 가짜 전송 함수."""
 
-    def __init__(self, decide=(), explain=None):
+    def __init__(self, decide=(), explain=None, checklist=None):
         self.decide = list(decide)
         self.explain = explain
+        self.checklist = checklist or CHECKLIST_JSON
         self.calls = []
 
     def __call__(self, model, messages, schema, name):
         self.calls.append(name)
         usage = dict(prompt_tokens=10, completion_tokens=5, total_tokens=15, reasoning_tokens=3)
         if name == "checklist":
-            return Raw(json.dumps(CHECKLIST_JSON), finish_reason="stop", usage=usage)
+            return Raw(json.dumps(self.checklist), finish_reason="stop", usage=usage)
         if name == "work_request":
             return Raw(json.dumps(self.explain or {"title": "확인 요청", "body": "질문",
                                                    "branches": ["답이 예면 → 2.4.1 로 올림", "답이 아니오면 → 조치 불필요"]}),
@@ -198,6 +199,8 @@ class Fake:
         if isinstance(step, Exception):
             raise step
         body = step(messages) if callable(step) else step
+        if "action" in body:                       # 도구 요청 등 단계 전체를 직접 준 경우
+            return Raw(json.dumps(body), finish_reason="stop", usage=usage)
         return Raw(json.dumps({"action": "final", "tool_requests": [], "verdict": body}), finish_reason="stop", usage=usage)
 
 
@@ -331,13 +334,14 @@ def test_verify_switch_off_accepts_unchecked_output(tmp_path):
 def test_escalate_only_when_undetermined_with_evidence(tmp_path):
     unsure = verdict("undetermined", [item("calls_parse", "unknown")], fix="", missing=["요청 입력 여부"])
     big = Fake([lambda m: good(app_id(m))])
-    out, _, _ = run(tmp_path, Fake([unsure]), escalate_fake=big)
+    # 입력 출처 항목이 unknown 이라 한 번은 추적 요청으로 되돌아오고, 그래도 유보하면 받아들인다
+    out, _, _ = run(tmp_path, Fake([unsure, unsure]), escalate_fake=big)
     v = out[0].verdict
     assert v.escalated and v.state == "affected" and v.decided_by == "model:fake-large"
     assert big.calls == ["decision"]
 
     off = Fake([lambda m: good(app_id(m))])
-    out, _, _ = run(tmp_path / "off", Fake([unsure]), escalate_fake=off, escalate=False)
+    out, _, _ = run(tmp_path / "off", Fake([unsure, unsure]), escalate_fake=off, escalate=False)
     assert out[0].verdict.state == "undetermined" and off.calls == []
 
 
@@ -502,3 +506,137 @@ def test_progress_event_after_each_finding(tmp_path):
     first = order.index("progress")
     last = len(order) - 1 - order[::-1].index("progress")
     assert order.index("start") < first and last < order.index("end")
+
+
+# ───────────────────────── 판정 품질 원칙(라이브러리 사실·전제·유보 전 추적) ─────────────────────────
+
+FIXED_KINDS = ("library_fact", "assumption")
+QUALITY_JSON = {"vulnerable_entry_points": ["xmlkit.parse_entities"], "items": [
+    *CHECKLIST_JSON["items"],
+    {"key": "default_resolves_external", "kind": "library_fact",
+     "question": "영향 버전의 parse_entities 는 옵션을 생략하면 외부 엔티티를 해석하는가?",
+     "symbols": [], "config_keys": [], "required": True},
+    {"key": "attacker_reaches_service", "kind": "assumption",
+     "question": "공격자가 이 서비스에 요청을 보낼 수 있는 네트워크 위치에 있는가?",
+     "symbols": [], "config_keys": [], "required": True}]}
+BLANK_TOOL = {"tool": "", "symbol": "", "path": "", "start": 0, "end": 0, "key": "", "why": ""}
+
+
+def tool_step(*requests):
+    return {"action": "tool", "tool_requests": [{**BLANK_TOOL, **r} for r in requests],
+            "verdict": verdict("undetermined", fix="")}
+
+
+def unsure_input(m):
+    """호출은 확인했지만 입력 출처(input_source)를 모른다며 유보."""
+    return verdict("undetermined", [item("calls_parse", "met", (app_id(m), CALL)), item("untrusted_input", "unknown")],
+                   fix="", missing=["요청 입력이 호출에 닿는지"])
+
+
+def test_checklist_splits_library_facts_and_assumptions(tmp_path):
+    from triage.judge.checklist import normalize, schema
+
+    assert set(FIXED_KINDS) <= set(schema()["properties"]["items"]["items"]["properties"]["kind"]["enum"])
+    s = settings(tmp_path)
+    cl, _ = normalize(QUALITY_JSON, finding(), s, "m", "k")
+    kinds = {i.key: (i.kind, i.required) for i in cl.items}
+    assert kinds["default_resolves_external"] == ("library_fact", True)
+    assert kinds["attacker_reaches_service"] == ("assumption", False)   # 운영 환경 전제는 필수 조건이 아니다
+    # 서비스 쪽 필수 조건이 하나도 없으면 패키지 사용 여부를 필수로 넣는다(권고문만으로 영향 있음이 되지 않게)
+    only = {"vulnerable_entry_points": [], "items": QUALITY_JSON["items"][2:]}
+    cl, _ = normalize(only, finding(), s, "m", "k")
+    service = [i for i in cl.items if i.required and i.kind not in FIXED_KINDS]
+    assert [i.kind for i in service] == ["api_use"] and service[0].symbols
+
+
+def test_library_fact_is_met_by_advisory_and_assumption_is_premise(tmp_path):
+    seen = []
+
+    def decide_step(m):
+        seen.append(m[1]["content"])
+        out = good(app_id(m))
+        # 모델이 라이브러리 사실·전제를 unknown 으로 적어도 규칙이 덮어쓴다
+        out["items"] += [item("default_resolves_external", "unknown"), item("attacker_reaches_service", "unknown")]
+        return out
+
+    out, _, _ = run(tmp_path, Fake([decide_step], checklist=QUALITY_JSON), escalate=False)
+    v = out[0].verdict
+    assert (v.state, v.decided_by, v.attempts) == ("affected", "model:fake-small", 1)
+    by = {r.item_key: r for r in v.item_results}
+    assert by["default_resolves_external"].status == "met"
+    assert by["default_resolves_external"].evidence_ids == ["lookup-0001"]   # 권고문 링크가 근거
+    assert by["attacker_reaches_service"].status == "assumed"
+    assert not by["attacker_reaches_service"].evidence_ids and "전제" in by["attacker_reaches_service"].reason
+    assert "라이브러리 사실" in seen[0] and "전제" in seen[0]                 # 판정 요청에도 구분해 보여 준다
+
+
+def test_library_fact_without_advisory_source_stays_unknown():
+    from triage.judge.decide import fill_fixed
+
+    cl = Checklist(vuln_id="V", items=[ConditionItem(**i) for i in QUALITY_JSON["items"]])
+    out = fill_fixed(verdict("undetermined", missing=["x"], fix=""), cl, [])
+    by = {i["key"]: i for i in out["items"]}
+    assert by["default_resolves_external"]["status"] == "unknown" and not by["default_resolves_external"]["citations"]
+    assert by["attacker_reaches_service"]["status"] == "assumed"
+
+
+def test_undetermined_only_on_facts_or_premises_is_asked_again(tmp_path):
+    asked = []
+    hold = lambda m: verdict("undetermined", good(app_id(m))["items"], fix="", missing=["운영 네트워크 위치"])
+
+    def second(m):
+        asked.append(m[-1]["content"])
+        return good(app_id(m))
+
+    fake = Fake([hold, second], checklist=QUALITY_JSON)
+    out, _, _ = run(tmp_path, fake, escalate=False)
+    assert out[0].verdict.state == "affected" and fake.calls.count("decision") == 2
+    assert "전제" in asked[0] and "라이브러리 사실" in asked[0]
+
+
+def test_unavailable_asks_only_service_side_conditions():
+    from triage.judge.agent import unavailable
+
+    cl = Checklist(vuln_id="V", items=[ConditionItem(**i) for i in QUALITY_JSON["items"]])
+    whats = {m.what for m in unavailable(finding(), "x", cl).missing_info}
+    assert whats == {i["question"] for i in CHECKLIST_JSON["items"]}
+
+
+def test_undetermined_on_input_source_requires_trace_first(tmp_path):
+    asked, events = [], []
+
+    def trace(m):
+        asked.append(m[-1]["content"])
+        return tool_step({"tool": "find_callers", "symbol": "xmlkit.parse_entities"},
+                         {"tool": "search_symbol", "symbol": "body"})
+
+    fake = Fake([unsure_input, trace, lambda m: good(app_id(m))])
+    out, _, _ = run(tmp_path, fake, events=events, escalate=False)
+    assert out[0].verdict.state == "affected" and fake.calls.count("decision") == 3
+    assert "untrusted_input" in asked[0] and "find_callers" in asked[0]
+    assert any(e == "challenge" and d["reason"] == "trace" for e, d in events)
+
+
+def test_traced_or_budgetless_undetermined_is_accepted(tmp_path):
+    first = tool_step({"tool": "find_callers", "symbol": "upload"}, {"tool": "read_lines", "path": APP, "start": 5, "end": 9})
+    fake = Fake([first, unsure_input])
+    out, _, _ = run(tmp_path, fake, escalate=False)
+    assert out[0].verdict.state == "undetermined" and fake.calls.count("decision") == 2
+
+    none_left = Fake([unsure_input])
+    out, _, _ = run(tmp_path / "zero", none_left, escalate=False, max_tool_calls=0)
+    assert out[0].verdict.state == "undetermined" and none_left.calls.count("decision") == 1
+
+
+def test_high_severity_gets_larger_tool_budget(tmp_path):
+    seen = []
+
+    def step(m):
+        seen.append(m[1]["content"])
+        return good(app_id(m))
+
+    s = settings(tmp_path)
+    assert s.max_tool_calls_by_severity["high"] > s.max_tool_calls
+    run(tmp_path, Fake([step, step]), [finding(severity="high"), finding(severity="medium")], escalate=False)
+    budgets = sorted(int(re.search(r"남은 도구 호출: (\d+)회", t).group(1)) for t in seen)
+    assert budgets == sorted([s.max_tool_calls_by_severity["high"], s.max_tool_calls])

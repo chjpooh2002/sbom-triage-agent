@@ -22,7 +22,7 @@ from ._engines import render_with_engine
 _DIRECTORY = Path(__file__).parent
 _STATES = {"affected": "영향 있음", "not_affected": "영향 없음", "undetermined": "판단 유보"}
 _DEPLOYMENT = {"yes": "배포됨", "no": "배포되지 않음", "unknown": "확인되지 않음"}
-_CONDITIONS = {"met": "충족", "not_met": "미충족", "unknown": "확인되지 않음"}
+_CONDITIONS = {"met": "충족", "not_met": "미충족", "unknown": "확인되지 않음", "assumed": "전제"}
 _FILE_SCOPE = {"yes": "배포됨", "no": "미배포", "unknown": "배포 미확인"}
 _SNAPSHOT_DATE = re.compile(r"^data/cache/lookup/(\d{4}-\d{2}-\d{2})/")
 _LOOKUP_NAMES = {

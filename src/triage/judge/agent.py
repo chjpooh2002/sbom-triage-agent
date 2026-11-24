@@ -18,7 +18,7 @@ from triage.models import (Anomaly, Checklist, Evidence, Finding, ItemResult, Mi
                            Verdict)
 
 from . import decide, escalate, explain, verify
-from .checklist import build_checklist
+from .checklist import build_checklist, is_service_condition
 from .client import LLMClient, error_fields, load_prompt
 from .settings import Settings, load_settings
 from .workspace import Workspace
@@ -75,7 +75,8 @@ def baseline(f: Finding) -> Verdict:
 
 def unavailable(f: Finding, reason: str, checklist: Checklist | None = None) -> Verdict:
     items = checklist.items if checklist else []
-    missing = [MissingInfo(what=i.question, where="애플리케이션 코드(배포 대상 파일)") for i in items if i.required]
+    missing = [MissingInfo(what=i.question, where="애플리케이션 코드(배포 대상 파일)")
+               for i in items if is_service_condition(i)]
     return Verdict(state="undetermined", decided_by="fallback", rationale_ko=f"모델 판정을 얻지 못해 판단 유보: {reason}",
                    missing_info=missing or [MissingInfo(what="취약 기능의 코드 사용 여부",
                                                         where="애플리케이션 코드 또는 담당 개발자")],
@@ -88,9 +89,10 @@ def demote(f: Finding, checklist: Checklist, output: dict | None, notes: list[st
     missing = list(base.missing_info)
     if not missing:
         done = {r.item_key for r in base.item_results if r.status in ("met", "not_met")}
+        service = [i for i in checklist.items if is_service_condition(i)]
         missing = [MissingInfo(what=i.question, where="애플리케이션 코드(배포 대상 파일)")
-                   for i in checklist.items if i.required and i.key not in done] or \
-                  [MissingInfo(what=i.question, where="애플리케이션 코드(배포 대상 파일)") for i in checklist.items[:2]]
+                   for i in service if i.key not in done] or \
+                  [MissingInfo(what=i.question, where="애플리케이션 코드(배포 대상 파일)") for i in service[:2]]
     return Verdict(state="undetermined", decided_by="fallback", item_results=base.item_results,
                    rationale_ko="모델 판정이 근거 검증을 통과하지 못해 판단 유보로 둔다. " + "; ".join(notes[:3]),
                    missing_info=missing, verifier_notes=[*notes, "검증 2회 실패로 판단 유보로 강등"],
@@ -145,15 +147,18 @@ class _Run:
         ws.checklist = checklist
         gathered = ws.gather(f, checklist, self.graph)
         prompt = load_prompt("decide")
-        case = decide.case_text(f, checklist, ws, gathered, s.max_tool_calls)
-        outcome = decide.run(f, checklist, ws, self.client, s, prompt, case)
+        budget = decide.tool_budget(f, s)
+        sources = decide.advisory_sources(f, ws.store)
+        case = decide.case_text(f, checklist, ws, gathered, budget)
+        outcome = decide.run(f, checklist, ws, self.client, s, prompt, case, budget=budget)
         notes = [f"점검표 대체: {checklist.cache_key}"] if checklist.model == "fallback" else []
-        verdict = self._settle(f, checklist, ws, outcome, prompt, notes)
+        verdict = self._settle(f, checklist, ws, outcome, prompt, notes, sources)
 
         ok, why = escalate.eligible(verdict, ws, s, self.escalate_client)
         self.emit("escalate.check", subject=f.key, eligible=ok, reason=why)
         if ok:
             up = escalate.run(outcome, verdict, self.escalate_client, prompt, case, f.key)
+            up.output = decide.fill_fixed(up.output, checklist, sources)
             violations = (verify.check(up.output, finding=f, checklist=checklist, store=ws.store, scope=self.scope)
                           if up.output is not None and s.verify else [])
             if up.output is not None and not violations and up.output.get("state") != "undetermined":
@@ -171,9 +176,10 @@ class _Run:
             fix = None
         return verdict, self._suspicious(outcome, ws), fix
 
-    def _settle(self, f, checklist, ws, outcome, prompt, notes) -> Verdict:
-        """검증 → 1회 재요청 → 강등."""
+    def _settle(self, f, checklist, ws, outcome, prompt, notes, sources) -> Verdict:
+        """라이브러리 사실·전제 결과 채움 → 검증 → 1회 재요청 → 강등."""
         s = self.settings
+        outcome.output = decide.fill_fixed(outcome.output, checklist, sources)
         if outcome.output is None:
             reason = f"모델 거절: {outcome.error}" if outcome.refused else f"모델 호출 실패: {outcome.error}"
             return unavailable(f, reason, checklist)
@@ -193,7 +199,7 @@ class _Run:
         if retry.output is None:
             outcome.output = None
             return demote(f, checklist, None, [*notes, *first, f"재요청 실패: {retry.error}"], retry.submissions)
-        outcome.output = retry.output
+        outcome.output = retry.output = decide.fill_fixed(retry.output, checklist, sources)
         again = verify.check(retry.output, finding=f, checklist=checklist, store=ws.store, scope=self.scope)
         self.emit("verify", subject=f.key, submission=2, violations=[str(v) for v in again])
         if not again:

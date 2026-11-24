@@ -48,6 +48,8 @@ class Settings:
     backoff_seconds: float = 1.0
     timeout_seconds: float = 60.0
     max_tool_calls: int = 3
+    max_tool_calls_by_severity: dict[str, int] = field(default_factory=dict)   # 등급별 상한(없으면 위 값)
+    trace_kinds: tuple[str, ...] = ("input_source",)   # 유보 전에 데이터 흐름 추적을 요구할 항목 종류
     workers: int = 4                      # SBOMTRIAGE_JUDGE_WORKERS 가 있으면 그 값
     max_symbols_per_item: int = 4
     max_config_keys_per_item: int = 3
@@ -80,6 +82,9 @@ def load_settings(**overrides) -> Settings:
         backoff_seconds=float(call.get("backoff_seconds", 1.0)),
         timeout_seconds=float(timeout or call.get("timeout_seconds", 60)),
         max_tool_calls=int(decide.get("max_tool_calls", 3)),
+        max_tool_calls_by_severity={str(k).lower(): int(v)
+                                    for k, v in (decide.get("max_tool_calls_by_severity") or {}).items()},
+        trace_kinds=tuple(decide.get("trace_before_undetermined_kinds", ["input_source"]) or ()),
         workers=positive_int("SBOMTRIAGE_JUDGE_WORKERS", int(decide.get("workers", 4))),
         max_symbols_per_item=int(decide.get("max_symbols_per_item", 4)),
         max_config_keys_per_item=int(decide.get("max_config_keys_per_item", 3)),

@@ -13,7 +13,10 @@ from triage.models import Checklist, Component, ConditionItem, Finding
 from .client import LLMClient, ModelError, load_prompt
 from .settings import Settings
 
-KINDS = ["api_use", "input_source", "config", "platform", "deployment", "other"]
+LIBRARY_FACT = "library_fact"   # 영향 버전 라이브러리 자체의 동작(권고문·패키지 문서 기준). 저장소에서 확인하지 않는다
+ASSUMPTION = "assumption"       # 소스로 확인할 수 없는 운영 환경 전제. 판정 조건이 아니라 보고서에 "전제"로 표시
+FIXED_KINDS = (LIBRARY_FACT, ASSUMPTION)   # 모델이 아니라 규칙이 항목 결과를 정하는 종류
+KINDS = ["api_use", "input_source", "config", "platform", "deployment", "other", *FIXED_KINDS]
 # 버전 범위를 다시 묻는 항목(예: version_below_fix, installed_version_in_range)
 _VERSION_ITEM = re.compile(r"version_(below|before|lt|le|in|range|affected|vulnerable|older)"
                            r"|(below|before|older_than)_(fix|patch|fixed)|in_affected_range", re.IGNORECASE)
@@ -63,17 +66,31 @@ def advisory_text(finding: Finding, settings: Settings) -> str:
     return "\n".join(lines)
 
 
+def uses_package_item(c: Component, key: str = "uses_package") -> ConditionItem:
+    return ConditionItem(key=key, kind="api_use", required=True, symbols=import_names(c),
+                         question=f"배포되는 코드가 {package_label(c)} 를 사용하는가?")
+
+
+def is_service_condition(item: ConditionItem) -> bool:
+    """서비스 코드·설정으로 확인할 필수 조건(라이브러리 사실·전제가 아닌 것)."""
+    return item.required and item.kind not in FIXED_KINDS
+
+
 def fallback_checklist(finding: Finding, note: str) -> Checklist:
     c = finding.component
     return Checklist(
         vuln_id=finding.vulnerability.id, ecosystem=c.ecosystem, package=package_label(c),
-        items=[ConditionItem(key="uses_package", kind="api_use", required=True, symbols=import_names(c),
-                             question=f"배포되는 코드가 {package_label(c)} 를 사용하는가?")],
-        model="fallback", cache_key=note)
+        items=[uses_package_item(c)], model="fallback", cache_key=note)
 
 
 def normalize(data: dict, finding: Finding, settings: Settings, model: str, key: str) -> tuple[Checklist, list[str]]:
-    """모델 출력 정리. 버전 항목은 규칙 1 위반이라 버린다(버전은 조회 데이터가 기준)."""
+    """모델 출력 정리.
+
+    - 버전 항목은 규칙 1 위반이라 버린다(버전은 조회 데이터가 기준).
+    - 운영 환경 전제(assumption)는 소스로 확인할 수 없으므로 필수 조건에서 뺀다.
+    - 서비스 쪽 필수 조건이 하나도 없으면(라이브러리 사실·전제뿐이면) 패키지 사용 여부를 필수로 넣는다.
+      권고문 사실만으로 저장소 증거 없이 영향 있음이 되지 않게 하기 위해서다.
+    """
     dropped, items, seen = [], [], set()
     for raw in data.get("items", []):
         k = re.sub(r"[^a-z0-9_]+", "_", str(raw.get("key", "")).lower()).strip("_") or f"item_{len(items) + 1}"
@@ -83,14 +100,23 @@ def normalize(data: dict, finding: Finding, settings: Settings, model: str, key:
         while k in seen:
             k += "_2"
         seen.add(k)
+        kind = raw.get("kind", "other") if raw.get("kind") in KINDS else "other"
         symbols = list(dict.fromkeys(s.strip()[:120] for s in raw.get("symbols", []) if s and s.strip()))
         keys = list(dict.fromkeys(s.strip()[:120] for s in raw.get("config_keys", []) if s and s.strip()))
-        items.append(ConditionItem(key=k, kind=raw.get("kind", "other"), question=raw.get("question", "").strip(),
-                                   symbols=symbols, config_keys=keys, required=bool(raw.get("required", True))))
+        items.append(ConditionItem(key=k, kind=kind, question=raw.get("question", "").strip(),
+                                   symbols=symbols, config_keys=keys,
+                                   required=bool(raw.get("required", True)) and kind != ASSUMPTION))
+    limit = settings.max_checklist_items
+    items = items[:limit]
     c = finding.component
+    if items and not any(is_service_condition(i) for i in items):
+        k = "uses_package"
+        while k in seen:
+            k += "_2"
+        items = [*items[:max(0, limit - 1)], uses_package_item(c, k)]
     checklist = Checklist(vuln_id=finding.vulnerability.id, ecosystem=c.ecosystem, package=package_label(c),
                           vulnerable_entry_points=[e for e in data.get("vulnerable_entry_points", []) if e][:10],
-                          items=items[:settings.max_checklist_items], model=model, cache_key=key)
+                          items=items, model=model, cache_key=key)
     return checklist, dropped
 
 

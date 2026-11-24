@@ -9,6 +9,12 @@ model_call:
 
 decide:
   max_tool_calls: 3          # 판정 한 건당 모델이 추가로 부를 수 있는 도구 호출 수
+  max_tool_calls_by_severity:   # 심각도가 높으면 유보 전에 데이터 흐름을 더 추적할 여유를 준다(없는 등급은 위 값)
+    critical: 6
+    high: 6
+  # 이 종류의 필수 항목이 unknown 인 채 판단 유보하려 하면, 모델이 find_callers 와 값 출처 추적
+  # (search_symbol·read_lines)을 한 번 이상 하지 않았을 때 유보를 받지 않고 도구 호출을 한 번 요구한다
+  trace_before_undetermined_kinds: [input_source]
   workers: 4                 # 동시에 판정하는 후보 수. SBOMTRIAGE_JUDGE_WORKERS 가 있으면 그 값
   max_symbols_per_item: 4    # 점검 항목 하나에서 미리 검색할 코드 기호 수
   max_config_keys_per_item: 3
