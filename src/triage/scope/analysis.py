@@ -46,6 +46,7 @@ class Install:
     entries: dict[str, list[tuple[str, str]]] = field(default_factory=dict)
     maven: Reactor | None = None
     maven_projects: frozenset[str] = frozenset()
+    maven_inputs: tuple[Origin, ...] = ()
 
 
 @dataclass
@@ -74,6 +75,7 @@ class Build:
         self.context: dict[str, Origin] = {}
         self.text: dict[str, str | None] = {}
         self.final_files: dict[str, Origin] = {}
+        self.maven_files: dict[str, tuple[str, ...]] = {}
         self.copy_refs: tuple[str, ...] = ()
 
     def cite(self, kind: str, path: str = "", line: Line | None = None, note: str = "") -> str:
@@ -214,6 +216,7 @@ class Build:
                 target = _destination(dest_path, to_dir, anchor, path)
                 origin = files[path]
                 stage.files[target] = replace(origin, refs=(*origin.refs, ref))
+                stage.installs = [item for item in stage.installs if item.kind != "maven" or item.output != target]
                 stage.dirs.update(str(parent) for parent in PurePosixPath(target).parents)
             if source_stage is not None:
                 self.copy_installs(stage, source_stage, pattern, dest_path, to_dir, ref)
@@ -228,6 +231,9 @@ class Build:
                     target = dest
                 else:
                     target = _destination(dest, directory, anchor, path)
+                if install.kind == "maven":
+                    stage.files.pop(target, None)
+                    stage.installs = [item for item in stage.installs if item.output != target]
                 stage.installs.append(replace(install, output=target, refs=(*install.refs, ref)))
                 break
 
@@ -340,11 +346,22 @@ class Build:
         graph = reactor(pom, selectors[-1].split(","), read, "-am" in args or "--also-make" in args)
         if graph is None or not graph.complete:
             raise ValueError("Maven 리액터를 확정할 수 없음")
-        for module in graph.modules:
-            if module.path in graph.selected and module.archive and module.packaging in {"jar", "war", "ear"}:
-                output = container_path(f"target/{module.archive}", posixpath.dirname(module.path))
-                stage.installs.append(Install("maven", ref, "", output, maven=graph,
-                                              maven_projects=frozenset({module.path})))
+        archives = [module for module in graph.modules if module.path in graph.selected
+                    and module.archive and module.packaging in {"jar", "war", "ear"}]
+        modules_by_directory = {posixpath.dirname(module.path): module for module in archives}
+        main_inputs: dict[str, list[Origin]] = {}
+        for path, origin in stage.files.items():
+            directory, separator, _ = path.partition("/src/main/")
+            if separator and (owner := modules_by_directory.get(directory or "/")):
+                main_inputs.setdefault(owner.path, []).append(replace(origin, refs=(*origin.refs, *owner.evidence)))
+        for module in archives:
+            output = container_path(f"target/{module.archive}", posixpath.dirname(module.path))
+            build_modules = graph.closure({module.path}) & graph.selected
+            inputs = tuple(origin for path, origins in main_inputs.items() if path in build_modules for origin in origins)
+            stage.files.pop(output, None)
+            stage.installs = [item for item in stage.installs if item.output != output]
+            stage.installs.append(Install("maven", ref, "", output, maven=graph,
+                                          maven_projects=frozenset({module.path}), maven_inputs=inputs))
 
 
 def _from_words(value: str) -> list[str]:
@@ -419,8 +436,10 @@ def _maven_decision(component: Component, installs: list[Install], build: Build)
     sources = _source_paths(component, build.root)
     by_source = [module for module in graph.modules if module.source in sources]
     name = component.module.replace("\\", "/").removeprefix("./").rstrip("/")
-    modules = by_source or [module for module in graph.modules
-                            if name and (name in module.aliases or name == module.artifact)]
+    # 상속 의존성의 POM 출처와 의존성이 적용되는 모듈은 다를 수 있다.
+    modules = [module for module in graph.modules if name in module.aliases or name == module.artifact] if name else by_source
+    if len(modules) > 1 and by_source:
+        modules = [module for module in modules if module in by_source]
     if len(modules) != 1:
         return None
     deployed_roots = set().union(*(item.maven_projects if item.refs else item.maven_projects & graph.projects
@@ -454,6 +473,12 @@ def _image_matches(component: Component, image: str) -> bool:
 
 
 def _component_decision(component: Component, stage: Stage, build: Build) -> Decision:
+    if component.kind == "base-image" and stage.image and "$" not in stage.image:
+        if _image_matches(component, stage.image):
+            return "yes", "최종 스테이지가 사용하는 기반 이미지에서 확인", (stage.ref, stage.base_ref)
+        build_refs = tuple(ref for image, ref in build.base_images if _image_matches(component, image))
+        if build_refs:
+            return "no", "빌드 전용 기반 이미지로 사용됨", (stage.ref, *build_refs)
     if stage.uncertain:
         return "unknown", _UNKNOWN_BUILD, (stage.ref, *stage.uncertain)
     if component.kind in {"runtime", "base-image", "server"} and component.version_source == "dockerfile":
@@ -499,6 +524,8 @@ def _file_decision(path: str, stage: Stage, build: Build) -> Decision:
         return "no", "Docker 빌드 컨텍스트에서 복사할 수 없는 파일", (build.excluded[path],)
     if stage.uncertain:
         return "unknown", _UNKNOWN_BUILD, (stage.ref, *stage.uncertain)
+    if archived := build.maven_files.get(path):
+        return "yes", "Maven 빌드 산출물로 포함", (stage.ref, *archived)
     copied = build.final_files.get(path)
     if copied:
         return "yes", "최종 Docker 스테이지에 파일이 복사됨", (stage.ref, *copied.refs)
@@ -557,6 +584,10 @@ def apply_scope(root: Path, components: list[Component], log: Callable[..., None
         fallback: Decision = ("unknown", reason, (build.cite("build", note=reason),))
     else:
         build.final_files = {origin.path: origin for origin in stage.files.values()}
+        for artifact in stage.installs:
+            if artifact.kind == "maven" and artifact.refs:
+                for origin in artifact.maven_inputs:
+                    build.maven_files.setdefault(origin.path, (*origin.refs, artifact.ref, *artifact.refs))
         build.copy_refs = tuple(ref for (_, path, line, _), ref in build.refs.items()
                                 if path == _DOCKERFILE and line and re.match(r"\s*(?:COPY|ADD|RUN)\s", line.snippet, re.I))
     updated = []
