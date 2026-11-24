@@ -12,8 +12,10 @@ import time
 from pathlib import Path
 from typing import Optional
 from urllib.parse import quote
+from xml.etree import ElementTree
 
 from ..intel.cache import cache_dir
+from ..maven_repos import FetchError, MavenRepositories, download
 from ..models import Component
 
 DEPSDEV = {"npm": "npm", "pypi": "pypi", "golang": "go", "cargo": "cargo", "nuget": "nuget", "maven": "maven"}
@@ -29,12 +31,20 @@ def _fetch(c: Component, timeout: float) -> Optional[list[str]]:
     import httpx
 
     if c.ecosystem == "maven" and c.group:
-        url = f"https://repo1.maven.org/maven2/{c.group.replace('.', '/')}/{c.name}/maven-metadata.xml"
-        r = httpx.get(url, timeout=timeout, follow_redirects=True)
-        if r.status_code == 404:
-            return []
-        r.raise_for_status()
-        return re.findall(r"<version>([^<]+)</version>", r.text)
+        path = f"{quote(c.group.replace('.', '/'), safe='/')}/{quote(c.name, safe='')}/maven-metadata.xml"
+
+        def parse_metadata(text, _url):
+            root = ElementTree.fromstring(text)
+            if root.tag != "metadata":
+                raise ValueError("Maven metadata 요소가 없습니다.")
+            return [node.text for node in root.findall("versioning/versions/version") if node.text]
+
+        try:
+            return MavenRepositories().fetch(path, download, parse_metadata)
+        except FetchError as error:
+            if error.missing:
+                return []
+            raise
     system = DEPSDEV.get(c.ecosystem)
     if not system:
         return None
