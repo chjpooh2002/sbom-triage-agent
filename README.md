@@ -77,6 +77,43 @@ uv run triage run samples/demo-app/scan --as-of 2026-11-24 -o out/demo
 KEV·EPSS·CVSS 값을 사례 안에 고정하므로 외부 값이 바뀌어도 채점이 흔들리지 않는다.
 지표: 정확 일치, 한 단계 이내, P1 재현율, 불필요 P1, 과소 평가(놓침 위험), 순위 상관(τ), CVSS 단독 기준선과 비교.
 
+## 본선 채점과 단계별 비교
+
+Python 3.11과 `uv` 환경에서 `uv sync`를 실행한다. 기본 정답 입력은 `eval/gold_finals.csv`이며 `--gold`로 경로를 지정할 수 있다.
+
+```bash
+uv run python -m eval.finals_score T --sbom saved/run1/sbom-T.json --run2 saved/run2/sbom-T.json
+uv run python -m eval.ablation T --saved saved/stages
+```
+
+첫 명령은 `out/score-T.md`, 두 번째는 `out/ablation.md`를 쓰고 같은 표를 표준출력에 표시한다. `--out`으로 출력 폴더를 바꿀 수 있다.
+채점기는 `--sbom` 생략 시 출력 폴더의 `sbom-<라벨>.json`을 읽는다. 서비스는 SBOM 프로젝트명과 라벨 순으로 정답지에서 찾고 `--service`로 지정할 수 있다.
+구성요소 그룹과 대소문자를 무시한다. 정답지의 표시명과 SBOM 이름이 다른 경우 `--component-alias "정답지 표시명=SBOM name"`을 지정할 수 있다.
+취약점 ID와 별칭은 정답지 `aliases`, CycloneDX `references[].id`, `triage:alias`·`triage:aliases` 속성에서 읽는다.
+
+- `core` 정확도와 재현율은 누락 후보도 분모에 포함한다. 정밀도는 `탐지 / (탐지 + core 오탐 + 정답지 밖 영향 있음)`이다. 추가 후보는 판정과 함께 표시하며 정답지 밖 영향 있음 판정을 별도 목록에도 표시한다.
+- 서비스·취약점·구성요소 이름이 같은 정답이 여러 행이면 정답 `version`의 첫 토큰과 SBOM 설치 버전을 맞춘다. 정답이 한 행이면 버전은 비교 대상에서 제외한다. 정답과 짝이 없는 후보는 설치 버전별로 센다. 매칭된 같은 키의 SBOM 판정이 충돌하면 정확 일치와 재현율에서 실패로 처리하고, 영향 있음 판정이 섞인 음성 `core` 사례는 오탐으로 센다.
+- `aux` 두 비율은 전체 `aux` 행을 분모로 쓴다. `missing_info`는 `triage:missing_info` 속성 또는 명시적 `analysis.missing_info`에서 읽는다. CycloneDX 스키마를 준수하는 출력은 속성에 기록하고 구조화 항목은 `what`과 `where`를 채운다.
+- 반복 일치율의 분모는 두 실행에 등장한 후보의 합집합이다. 양쪽에 일관된 정의 상태가 있고 값이 같을 때 일치로 센다.
+
+저장 모드는 `--saved` 아래의 `rules`, `model`, `verify`, `escalate`, `reference` 폴더에서 각각 `sbom-<라벨>.json`과 `log-<라벨>-run1.jsonl`을 읽는다.
+`--stage`를 반복해 일부 단계만 고를 수 있다. 총 토큰과 초 단위 총 시간은 JSONL 마지막 `run.end`에서 읽으며, 저장 모드에서 로그가 없으면 `측정 불가`로 표시한다.
+
+실행 모드는 각 단계에서 `triage.finals.run_scan(label, root, out_dir, offline=..., judge=default_judge())`를 호출한다. `uv run --env-file .env python -m eval.ablation T --root ./project`로 실행한다.
+`triage.finals.default_judge`가 없거나 `SBOMTRIAGE_JUDGE=on` 단계의 판정기를 가져올 수 없으면 오류를 표시한다.
+`--offline`은 그대로 전달된다. 각 단계가 같은 소스를 별도 프로세스에서 스캔하고 `out/ablation-runs/` 아래에 독립 실행 산출물을 남긴다.
+
+| 단계 | `SBOMTRIAGE_JUDGE` | `SBOMTRIAGE_VERIFY` | `SBOMTRIAGE_ESCALATE` | 모델 환경변수 |
+| --- | --- | --- | --- | --- |
+| 결정적 선판정 | off | off | off | |
+| 모델 판정 | on | off | off | `SBOMTRIAGE_MODEL` |
+| 검증기 | on | on | off | `SBOMTRIAGE_MODEL` |
+| 조건부 승급 | on | on | on | `SBOMTRIAGE_MODEL`, `SBOMTRIAGE_ESCALATE_MODEL` |
+| 참고 상한 모델 | on | on | on | `SBOMTRIAGE_REFERENCE_MODEL`을 기본·승급 모델에 적용 |
+
+`SBOMTRIAGE_JUDGE=off`는 결정적 선판정까지만 실행한다. `SBOMTRIAGE_VERIFY=on`은 검증을 추가하고 `SBOMTRIAGE_ESCALATE=on`은 승급 조건을 평가한다.
+모델 설정과 접속 주소(`OPENAI_BASE_URL`)는 환경에서 전달한다. 채점 공식과 비교 실행기는 이 저장소의 `eval/`에 구현되어 있으며 입력 판정과 실측 시간·토큰은 SBOM과 실행 로그에서 가져온다.
+
 ## 폴더
 
 ```
