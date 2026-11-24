@@ -11,7 +11,7 @@ from jsonschema import ValidationError
 from triage.models import Anomaly, Finding, PriorityResult, Remediation, TriageBundle, Verdict, Vulnerability
 from triage.output import RunLog, render_pdf, validate_cyclonedx, write_cyclonedx
 from triage.output._common import write_artifact
-from triage.output.report_pdf import _context
+from triage.output.report_pdf import _context, _engines
 
 
 @pytest.fixture
@@ -170,6 +170,81 @@ def _pdf_text(bundle, out, **meta):
     evidence = render_pdf(bundle, {"name": "한글 예제 프로젝트", **meta}, out)
     assert [item.id for item in evidence] == ["pdf-0001"]
     return subprocess.check_output([pdftotext, "-enc", "UTF-8", str(out), "-"], encoding="utf-8")
+
+
+@pytest.fixture
+def missing_weasyprint(monkeypatch):
+    def unavailable(_page):
+        raise OSError("Pango DLL unavailable")
+
+    monkeypatch.setattr(_engines, "_render_weasyprint", unavailable)
+
+
+def test_pdf_uses_chromium_with_temporary_profile(bundle, tmp_path, monkeypatch, missing_weasyprint):
+    browser = tmp_path / "example browser" / "example-chromium.exe"
+    monkeypatch.setenv("SBOMTRIAGE_PDF_BROWSER", str(browser))
+    monkeypatch.setattr(_engines.shutil, "which", lambda name: str(browser) if name == str(browser) else None)
+    out = tmp_path / "output" / "result.pdf"
+    content = b"%PDF-1.7\n"
+    events = []
+    scratch = []
+
+    def run(arguments, **options):
+        assert arguments[0] == str(browser)
+        assert "--headless=new" in arguments
+        assert "--no-pdf-header-footer" in arguments
+        assert options["timeout"] == 120
+        pdf = Path(next(value for value in arguments if value.startswith("--print-to-pdf=")).split("=", 1)[1])
+        profile = Path(next(value for value in arguments if value.startswith("--user-data-dir=")).split("=", 1)[1])
+        assert profile.parent == pdf.parent
+        assert pdf.parent.parent == out.parent
+        scratch.append(pdf.parent)
+        html = pdf.with_suffix(".html")
+        assert arguments[-1] == html.as_uri()
+        assert "NotoSansKR.ttf" in html.read_text(encoding="utf-8")
+        pdf.write_bytes(content)
+
+    def event(stage, name, **data):
+        events.append((stage, name, data))
+
+    monkeypatch.setattr(_engines.subprocess, "run", run)
+    evidence, = render_pdf(bundle, {}, out, log=event)
+    assert out.read_bytes() == content
+    assert scratch and not scratch[0].exists()
+    assert evidence.id == "pdf-0001"
+    assert "chromium:example-chromium.exe" in evidence.note
+    assert str(browser.parent) not in evidence.note
+    assert events == [("pdf", "engine", {"engine": "chromium:example-chromium.exe"})]
+
+
+@pytest.mark.parametrize("browser_exists", [False, True])
+def test_pdf_reports_unavailable_engines(bundle, tmp_path, monkeypatch, missing_weasyprint, browser_exists):
+    browser = tmp_path / "example-chromium.exe" if browser_exists else None
+    monkeypatch.setattr(_engines, "_find_browser", lambda: browser)
+
+    def timeout(*args):
+        raise subprocess.TimeoutExpired(str(browser), 120)
+
+    monkeypatch.setattr(_engines, "_print_chromium", timeout)
+    out = tmp_path / "report.pdf"
+    with pytest.raises(OSError, match="WeasyPrint 라이브러리와 Edge/Chrome을 찾지 못함") as error:
+        render_pdf(bundle, {}, out)
+    assert str(tmp_path) not in str(error.value)
+    assert not out.exists()
+
+
+def test_chromium_pdf_extracts_korean_and_evidence_location(bundle, tmp_path, missing_weasyprint):
+    browser = _engines._find_browser()
+    pdftotext = shutil.which("pdftotext")
+    if browser is None or pdftotext is None:
+        pytest.skip("Chromium 계열 브라우저와 pdftotext가 필요합니다.")
+    out = tmp_path / "report.pdf"
+    evidence, = render_pdf(bundle, {"name": "한글 예제 프로젝트"}, out)
+    assert f"chromium:{browser.name}" in evidence.note
+    text = subprocess.check_output([pdftotext, "-enc", "UTF-8", str(out), "-"], encoding="utf-8")
+    assert "취약점 조치 보고서" in text
+    assert "한글 예제 프로젝트" in text
+    assert "app-settings.json:3-5" in text
 
 
 def test_pdf_groups_rule_deferred_candidates_with_shared_source_evidence(bundle):

@@ -20,6 +20,8 @@ SBOM / 스캔 / 자산표  →  변환기 → 공통 구조  →  KEV·EPSS 캐�
 
 ## 빠른 시작
 
+PDF는 WeasyPrint를 사용하며, 실행할 수 없으면 설치된 Edge 또는 Chrome으로 인쇄합니다. 해당 브라우저가 있는 Windows에서는 PDF 생성용 추가 설치가 필요 없습니다.
+
 ```bash
 uv sync
 uv run triage fetch-intel                 # KEV·EPSS 전체 파일 캐시 (본선 전날 꼭 실행)

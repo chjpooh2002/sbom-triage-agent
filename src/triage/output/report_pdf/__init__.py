@@ -1,7 +1,7 @@
 """근거와 조치 계획을 한국어 PDF로 내보낸다."""
 import re
 from collections import Counter, defaultdict
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from pathlib import Path, PurePosixPath
 from urllib.parse import urlsplit
 
@@ -13,6 +13,7 @@ from .._common import (
     artifact_evidence, file_location, finding_state, public_url, write_artifact,
 )
 from .._redact import Redactor
+from ._engines import render_with_engine
 
 
 _DIRECTORY = Path(__file__).parent
@@ -284,16 +285,13 @@ def _context(bundle: TriageBundle, meta: dict) -> dict:
     }
 
 
-def render_pdf(bundle: TriageBundle, meta: dict, out: Path) -> list[Evidence]:
+def render_pdf(
+    bundle: TriageBundle, meta: dict, out: Path, *, log: Callable[..., None] | None = None,
+) -> list[Evidence]:
     """PDF를 저장하고 생성 근거를 반환한다.
 
     조회 기록은 meta의 lookup_at 또는 lookup_sources(name, url, retrieved_at)로 전달한다.
     """
-    from weasyprint import HTML
-    from weasyprint.text.fonts import FontConfiguration
-    from weasyprint.urls import URLFetcher
-
-    evidence = artifact_evidence("pdf", out, "한국어 취약점 조치 보고서 생성", bundle)
     environment = Environment(
         autoescape=True,
         trim_blocks=True,
@@ -305,7 +303,8 @@ def render_pdf(bundle: TriageBundle, meta: dict, out: Path) -> list[Evidence]:
     font = (_DIRECTORY / "fonts" / "NotoSansKR.ttf").resolve().as_uri()
     template = (_DIRECTORY / "report.html").read_text(encoding="utf-8")
     page = environment.from_string(template).render(**context, font=font)
-    fetcher = URLFetcher(allowed_protocols={"file"})
-    pdf = HTML(string=page, url_fetcher=fetcher).write_pdf(font_config=FontConfiguration())
+    pdf, engine = render_with_engine(page, out.parent)
     write_artifact(out, pdf)
-    return [evidence]
+    if log is not None:
+        log("pdf", "engine", engine=engine)
+    return [artifact_evidence("pdf", out, f"한국어 취약점 조치 보고서 생성 ({engine})", bundle)]

@@ -178,7 +178,7 @@ def run_scan(
             bundle.meta["limitations"] = [f"취약점 조회에서 응답이나 캐시를 확보하지 못한 요청이 {lookup_misses}건 있습니다."]
         bundle.meta["incomplete_coverage"] = bool(lookup_misses or {"collect", "lookup"}.intersection(failures))
         with step("pdf"):
-            bundle.evidence.extend(render_pdf(bundle, meta, report_path))
+            bundle.evidence.extend(render_pdf(bundle, meta, report_path, log=log))
             paths["report"] = report_path
         completed = True
     finally:
