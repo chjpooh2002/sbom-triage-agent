@@ -10,7 +10,6 @@ from pathlib import Path, PureWindowsPath
 from stat import S_IFDIR, S_IFMT, S_IFREG
 from zipfile import BadZipFile, ZipFile
 
-import pandas as pd
 import streamlit as st
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -429,6 +428,8 @@ def legacy_screen() -> None:
     if not res:
         st.info("위에서 데이터를 고르고 '분석 실행'을 누르세요.")
         return
+
+    import pandas as pd
 
     b, pol = res.bundle, res.policy
     s = summary(b)
