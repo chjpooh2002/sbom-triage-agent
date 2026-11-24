@@ -2,10 +2,12 @@ import json
 import shutil
 import subprocess
 import sys
+from pathlib import Path
 
 import pytest
 from typer.testing import CliRunner
 
+import triage
 from triage import finals
 from triage.cli import app
 from triage.lookup import LookupResult
@@ -17,7 +19,8 @@ from triage.scope import ScopeResult
 def source(tmp_path):
     root = tmp_path / "project"
     root.mkdir()
-    (root / "requirements.txt").write_text("example-scan-library==1.2.3\n", encoding="utf-8")
+    fixture = Path(__file__).parent / "fixtures" / "finals" / "scan" / "requirements.txt"
+    shutil.copyfile(fixture, root / fixture.name)
     return root
 
 
@@ -91,3 +94,64 @@ def test_rule_verdicts_and_failed_judge_recovery(source, tmp_path, monkeypatch, 
         assert "judge 단계 실패" in report
         assert "scan-0001" in report
         assert "raw error contents" not in report
+
+
+def test_scan_callback_observes_committed_log_records(source, tmp_path):
+    out = tmp_path / "result"
+    log_path = out / "log-events-run1.jsonl"
+    observed = []
+
+    def on_event(record):
+        observed.append((record, read_log(log_path)[-1]))
+
+    result = finals.run_scan("events", source, out, offline=True, on_event=on_event)
+    assert not result.failures
+    records = read_log(log_path)
+    assert observed == [(record, record) for record in records]
+    assert {"seconds", "status", "components", "candidates", "files", "verdicts"} <= records[-1]["data"].keys()
+
+
+@pytest.mark.parametrize("fail_at", ["start", "end"])
+def test_scan_callback_error_preserves_artifacts_and_log(source, tmp_path, fail_at):
+    calls = []
+
+    def on_event(record):
+        events = record["stage"], record["event"]
+        calls.append(events)
+        if events == ("run", fail_at):
+            raise RuntimeError("raw callback message")
+
+    result = finals.run_scan("callback-error", source, tmp_path / "result", offline=True, on_event=on_event)
+    assert not result.failures
+    assert set(result.paths) == {"sbom", "report", "log"}
+    assert all(path.is_file() for path in result.paths.values())
+    events = read_log(result.paths["log"])
+    event_keys = [(event["stage"], event["event"]) for event in events]
+    assert event_keys[-1] == ("run", "end")
+    assert event_keys.count(("run", "end")) == 1
+    callback_failure = event_keys.index(("run", "callback_error"))
+    assert event_keys.count(("run", "callback_error")) == 1
+    assert events[callback_failure]["data"] == {"error": "RuntimeError"}
+    expected_calls = event_keys[:callback_failure]
+    if fail_at == "end":
+        expected_calls.append(event_keys[-1])
+    assert calls == expected_calls
+
+
+def test_default_judge_returns_none_if_module_is_absent(monkeypatch):
+    monkeypatch.setitem(sys.modules, "triage.judge", None)
+    assert finals.default_judge() is None
+
+
+@pytest.mark.parametrize("source, error, module", [
+    ("import missing_scan_test_dependency", ModuleNotFoundError, "missing_scan_test_dependency"),
+    ("from sys import missing_scan_test_symbol", ImportError, "sys"),
+])
+def test_default_judge_propagates_internal_import_errors(tmp_path, monkeypatch, source, error, module):
+    (tmp_path / "judge.py").write_text(source, encoding="utf-8")
+    monkeypatch.delitem(sys.modules, "triage.judge", raising=False)
+    monkeypatch.setattr(triage, "__path__", [str(tmp_path)])
+
+    with pytest.raises(error) as caught:
+        finals.default_judge()
+    assert caught.value.name == module

@@ -28,6 +28,17 @@ class ScanResult:
     failures: dict[str, str]
 
 
+def default_judge() -> Judge | None:
+    """판정 모듈이 설치된 경우 기본 판정기를 불러온다."""
+    try:
+        from .judge import judge_all
+    except ModuleNotFoundError as error:
+        if error.name == "triage.judge":
+            return None
+        raise
+    return judge_all
+
+
 def _prejudge(findings: list[Finding]) -> list[Finding]:
     results = []
     for finding in findings:
@@ -55,6 +66,7 @@ def _prejudge(findings: list[Finding]) -> list[Finding]:
 
 def run_scan(
     label: str, root: Path, out_dir: Path, offline: bool = False, run_no: int = 1, judge: Judge | None = None,
+    on_event: Callable[[dict], None] | None = None,
 ) -> ScanResult:
     """점검 결과를 반환한다. 판정기는 모델 호출마다 usage 이벤트를 남길 수 있다."""
     if not label.strip() or any(char in '<>:"/\\|?*' or ord(char) < 32 for char in label):
@@ -69,7 +81,7 @@ def run_scan(
     paths: dict[str, Path] = {}
     failures: dict[str, str] = {}
     log_path = out_dir / f"log-{label}-run{run_no}.jsonl"
-    run_log = RunLog(log_path)
+    run_log = RunLog(log_path, on_event=on_event)
     lookup_misses = 0
 
     def log(stage: str, event: str, **data) -> None:
@@ -167,6 +179,7 @@ def run_scan(
         if judge is None:
             run_log.add_usage(total_tokens=0)
         status = "partial" if failures else "ok"
-        bundle.evidence.extend(run_log.close(status=status if completed else "error", failed_stages=list(failures)))
+        bundle.evidence.extend(run_log.close(status=status if completed else "error", failed_stages=list(failures),
+                                             **counts()))
         paths["log"] = log_path
     return ScanResult(bundle, paths, failures)

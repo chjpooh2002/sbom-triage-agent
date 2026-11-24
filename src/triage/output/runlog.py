@@ -1,7 +1,7 @@
 """단계별 이벤트와 실행 요약을 UTF-8 JSONL로 기록한다."""
 import json
 import time
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from datetime import datetime, timezone
 from pathlib import Path
 from threading import Lock
@@ -17,12 +17,15 @@ def _count(value) -> int | None:
 
 
 class RunLog:
-    def __init__(self, path: Path, *, secrets: tuple[str, ...] = ()) -> None:
+    def __init__(
+        self, path: Path, *, secrets: tuple[str, ...] = (), on_event: Callable[[dict], None] | None = None,
+    ) -> None:
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self._file = self.path.open("w", encoding="utf-8", newline="\n")
         self._start = time.perf_counter()
         self._redact = Redactor(secrets)
+        self._on_event = on_event
         self._lock = Lock()
         self._total_tokens = 0
         self._reasoning_tokens: int | None = None
@@ -35,8 +38,23 @@ class RunLog:
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "stage": stage, "event": event, "data": data,
         })
-        self._file.write(json.dumps(record, ensure_ascii=False, allow_nan=False) + "\n")
+        line = json.dumps(record, ensure_ascii=False, allow_nan=False) + "\n"
+        callback = self._on_event
+        end_position = self._file.tell() if callback is not None and (stage, event) == ("run", "end") else None
+        self._file.write(line)
         self._file.flush()
+        if callback is not None:
+            try:
+                callback(json.loads(line))
+            except Exception as error:
+                self._on_event = None
+                if end_position is not None:
+                    # 종료 이벤트에서 실패해도 run.end를 마지막 줄로 유지한다.
+                    self._file.seek(end_position)
+                    self._file.truncate()
+                self._write("run", "callback_error", {"error": type(error).__name__})
+                if end_position is not None:
+                    self._write(stage, event, data)
 
     def emit(self, stage: str, event: str, **data) -> None:
         with self._lock:
@@ -88,8 +106,8 @@ class RunLog:
             if self._evidence is not None:
                 return [self._evidence]
             evidence = artifact_evidence("runlog", self.path, "실행 시간과 모델 토큰 사용량 집계")
-            data.update(total_seconds=round(time.perf_counter() - self._start, 6),
-                        evidence_ids=[evidence.id])
+            seconds = round(time.perf_counter() - self._start, 6)
+            data.update(seconds=seconds, total_seconds=seconds, evidence_ids=[evidence.id])
             if self._missing_usage or not self._usage_count:
                 reason = ("일부 또는 전체 모델 호출의 토큰 사용량이 누락되었습니다."
                           if self._missing_usage else "기록된 모델 토큰 사용량이 없습니다.")

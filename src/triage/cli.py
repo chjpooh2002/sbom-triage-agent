@@ -206,15 +206,11 @@ def scan(
     run_no: int = typer.Option(1, "--run", min=1, help="실행 로그 번호"),
 ) -> None:
     """소스 디렉터리를 점검해 SBOM, PDF 보고서, 실행 로그를 만든다."""
-    from .finals import run_scan
+    from .finals import default_judge, run_scan
 
+    judge = default_judge()
     try:
-        from .judge import judge_all
-    except ImportError:
-        judge_all = None
-
-    try:
-        result = run_scan(label, root, out_dir, offline=offline, run_no=run_no, judge=judge_all)
+        result = run_scan(label, root, out_dir, offline=offline, run_no=run_no, judge=judge)
     except (ValueError, OSError) as error:
         typer.secho(str(error), err=True, fg=typer.colors.RED)
         raise typer.Exit(1) from error
