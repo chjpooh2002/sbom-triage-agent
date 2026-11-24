@@ -711,10 +711,10 @@ def show_results(bundle, downloads, failures, command=None) -> None:
     with work:
         if rows:
             with st.container(key="action_workspace"):
-                left, right = st.columns([1, 2.12], gap="medium")
-                with left.container(key="action_queue"):
+                left, right = st.columns(2, gap="small")
+                with left.container(key="action_queue", height="stretch"):
                     number = show_queue(rows)
-                with right.container(key="action_detail"):
+                with right.container(key="action_detail", height="stretch"):
                     show_action(number, actions[number - 1], rows[number - 1], bundle, findings, evidence, command, label)
         else:
             with st.container(key="empty_work"):
