@@ -12,7 +12,7 @@ from triage.evidence import EvidenceStore, find_callers, read_lines, resolve_con
 from triage.models import Anomaly, Checklist, Evidence, Finding, SourceFileScope
 
 from .checklist import import_names
-from .comments import comment_starts, comment_text
+from .comments import comment_text, starts_for
 from .settings import Settings
 
 _CALLABLE = re.compile(r"^[A-Za-z_$][\w$]*(\.[A-Za-z_$][\w$]*)*$")
@@ -70,8 +70,8 @@ class Workspace:
             return f"{head} — [{same}]와 같은 줄"
         self.shown[(e.file, e.line_start, e.line_end)] = eid
         lines = e.snippet.split("\n")
-        starts = comment_starts(e.file, lines)
-        texts = comment_text(e.file, lines)
+        starts = starts_for(self.root, e.file, e.line_start, lines)
+        texts = comment_text(e.file, lines, starts)
         whole = [str(e.line_start + i) for i, st in enumerate(starts) if st == 0]
         flagged = []
         for i, text in enumerate(texts):
@@ -295,6 +295,7 @@ class Workspace:
             s = self.scope.get(e.file)
             if e.kind == "code" and s and s.deployed == "yes" and s.category == "app":
                 lines = e.snippet.split("\n")
-                if any(st != 0 for st, line in zip(comment_starts(e.file, lines), lines) if line.strip()):
+                starts = starts_for(self.root, e.file, e.line_start, lines)
+                if any(st != 0 for st, line in zip(starts, lines) if line.strip()):
                     count += 1
         return count

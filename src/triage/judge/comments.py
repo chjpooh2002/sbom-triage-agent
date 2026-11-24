@@ -4,8 +4,14 @@
 """
 from __future__ import annotations
 
+import ast
+import io
 import re
-from pathlib import PurePosixPath
+import tokenize
+from functools import lru_cache
+from pathlib import Path, PurePosixPath
+
+from triage.evidence.store import scoped_path
 
 _HASH = {".py", ".yml", ".yaml", ".sh", ".bash", ".properties", ".conf", ".toml", ".cfg", ".ini", ".rb",
          ".pl", ".r", ".env", ".dockerignore", ".gitignore", ".example"}
@@ -102,9 +108,59 @@ def comment_starts(path: str, lines: list[str]) -> list[int | None]:
     return out
 
 
-def comment_text(path: str, lines: list[str]) -> list[str]:
+def _python_starts(text: str) -> list[int | None] | None:
+    """파이썬은 구문 분석으로 정확히 가린다: 독스트링(단독 문자열 문장) 줄 전체와 # 주석 토큰."""
+    lines = text.splitlines()
+    out: list[int | None] = [None] * len(lines)
+    try:
+        tree = ast.parse(text)
+        for node in ast.walk(tree):
+            if (isinstance(node, ast.Expr) and isinstance(node.value, ast.Constant)
+                    and isinstance(node.value.value, str)):
+                for n in range(node.lineno, (node.end_lineno or node.lineno) + 1):
+                    out[n - 1] = 0
+        for tok in tokenize.generate_tokens(io.StringIO(text).readline):
+            if tok.type == tokenize.COMMENT:
+                row, col = tok.start
+                if out[row - 1] is None:
+                    out[row - 1] = 0 if not lines[row - 1][:col].strip() else col
+    except (SyntaxError, ValueError, tokenize.TokenError, RecursionError):
+        return None
+    return out
+
+
+@lru_cache(maxsize=512)
+def _file_starts(root: str, rel: str, mtime: float) -> tuple[int | None, ...] | None:
+    try:
+        text = scoped_path(Path(root), rel).read_text(encoding="utf-8")
+    except (OSError, ValueError, RuntimeError):
+        return None
+    if PurePosixPath(rel).suffix.lower() == ".py":
+        exact = _python_starts(text)
+        if exact is not None:
+            return tuple(exact)
+    return tuple(comment_starts(rel, text.splitlines()))
+
+
+def starts_for(root, rel: str, line_start: int | None, lines: list[str]) -> list[int | None]:
+    """근거 조각의 줄별 주석 시작 열. 파일 전체 문맥으로 계산해 블록 중간에서 잘린 조각도 바르게 본다."""
+    if root is not None and rel and line_start:
+        try:
+            mtime = scoped_path(Path(root), rel).stat().st_mtime
+        except (OSError, ValueError, RuntimeError):
+            mtime = None
+        if mtime is not None:
+            whole = _file_starts(str(Path(root)), rel, mtime)
+            if whole is not None:
+                seg = list(whole[line_start - 1:line_start - 1 + len(lines)])
+                if len(seg) == len(lines):
+                    return seg
+    return comment_starts(rel, lines)
+
+
+def comment_text(path: str, lines: list[str], starts: list[int | None] | None = None) -> list[str]:
     """줄마다 주석 부분 문자열(없으면 빈 문자열)."""
-    starts = comment_starts(path, lines)
+    starts = starts if starts is not None else comment_starts(path, lines)
     return ["" if s is None else line[s:] for line, s in zip(lines, starts)]
 
 
@@ -137,13 +193,13 @@ def locate(quote: str, snippet: str) -> list[list[tuple[int, int]]] | None:
     return found
 
 
-def quote_in_comment(path: str, quote: str, snippet: str) -> bool | None:
+def quote_in_comment(path: str, quote: str, snippet: str, starts: list[int | None] | None = None) -> bool | None:
     """인용이 원문의 주석 부분에만 걸리면 True. 인용을 못 찾으면 None."""
     found = locate(quote, snippet)
     if found is None:
         return None
     lines = snippet.split("\n")
-    starts = comment_starts(path, lines)
+    starts = starts if starts is not None else comment_starts(path, lines)
     for hits in found:
         for i, col in hits:
             start = starts[i]

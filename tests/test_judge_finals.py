@@ -347,3 +347,20 @@ def test_env_switches(monkeypatch):
     monkeypatch.setenv("SBOMTRIAGE_VERIFY", "maybe")
     with pytest.raises(ValueError):
         load_settings()
+
+
+def test_code_after_docstring_is_not_comment(tmp_path):
+    """근거 조각이 독스트링 중간에서 시작해도 닫는 따옴표 뒤 코드 줄은 코드로 본다."""
+    files = [*FILES, SourceFileScope(path="app/client.py", deployed="yes", category="app")]
+    store = EvidenceStore(ROOT)
+    hit, _ = read_lines(ROOT, files, "app/client.py", 7, 10, store=store)
+    eid = hit["evidence_ids"][0]
+    out = verdict(items=[item("calls_parse", "met", (eid, "doc = xmlkit.parse_entities(body)")),
+                         item("untrusted_input", "met", (eid, "doc = xmlkit.parse_entities(body)"))])
+    scope = {f.path: f for f in files}
+    assert "comment_only_evidence" not in {
+        v.rule for v in check(out, finding=finding(), checklist=CHECKLIST, store=store, scope=scope)}
+    docline = verdict("not_affected", [item("calls_parse", "not_met", (eid, "엔티티 해석 여부는 여기서 정하지 않는다."))],
+                      fix="", just="code_not_present")
+    assert "comment_only_evidence" in {
+        v.rule for v in check(docline, finding=finding(), checklist=CHECKLIST, store=store, scope=scope)}

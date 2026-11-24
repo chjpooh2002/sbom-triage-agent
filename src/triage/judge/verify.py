@@ -22,7 +22,7 @@ from pathlib import Path
 from triage.evidence import EvidenceStore
 from triage.models import Checklist, Finding, SourceFileScope
 
-from .comments import locate, quote_in_comment
+from .comments import locate, quote_in_comment, starts_for
 
 CODE_CATEGORIES = {"app", "test", "script", "legacy", "generated", "vendored_bundle"}
 
@@ -80,7 +80,8 @@ def check(output: dict, *, finding: Finding, checklist: Checklist, store: Eviden
                                      f"'{key}'의 근거 '{eid}' 인용문이 원문({e.file}:{e.line_start}-{e.line_end})에 없음"))
                 comment_flags.append(False)
                 continue
-            comment_flags.append(bool(quote_in_comment(e.file, quote, e.snippet)))
+            starts = starts_for(store.root, e.file, e.line_start, e.snippet.split("\n"))
+            comment_flags.append(bool(quote_in_comment(e.file, quote, e.snippet, starts)))
             s = scope.get(Path(e.file).as_posix())
             if s and s.category in CODE_CATEGORIES:
                 item_code_files.setdefault(key, []).append(e.file)
