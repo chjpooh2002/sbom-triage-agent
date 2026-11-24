@@ -16,6 +16,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
 from triage.pipeline import run  # noqa: E402
+from triage.output._redact import Redactor  # noqa: E402
 from triage.report import excel  # noqa: E402
 from triage.report.view import action_groups, finding_row, reasons_text, summary  # noqa: E402
 
@@ -35,6 +36,9 @@ STAGES = {
     "scope": ("범위", "배포 확인 대상 파일", "files"),
     "lookup": ("조회", "취약점 후보", "candidates"),
     "judge": ("판정·검증", "판정", "verdicts"),
+    "enrich": ("위험 정보 보강", "후보", "candidates"),
+    "priority": ("우선순위 산정", "후보", "prioritized"),
+    "remediate": ("조치·검증 계획", "조치안", "remediations"),
     "cyclonedx": ("구성요소 목록 생성", "생성 파일", None),
     "pdf": ("PDF 보고서 생성", "생성 파일", None),
 }
@@ -234,15 +238,17 @@ def show_detail(finding, evidence, remediation, checklist) -> None:
 
 
 def show_results(bundle, downloads, failures) -> None:
+    for anomaly in bundle.anomalies:
+        if anomaly.kind == "judge_degraded":
+            st.warning(Redactor().text(anomaly.message))
     if failures:
         st.warning("일부 단계 실패")
         for stage, reason in failures.items():
             st.text(f"{stage_label(stage)} · {reason}")
     groups = final_groups(bundle)
-    st.subheader("먼저 고칠 것 3개")
-    if not groups["affected"]:
-        st.info("영향이 확인된 항목이 없습니다.")
-    for index, finding in enumerate(groups["affected"][:3], 1):
+    top_actions = groups["affected"][:3]
+    st.subheader(f"먼저 고칠 것 {len(top_actions)}개" if top_actions else "먼저 고칠 것 — 영향 있음 확정 항목 없음")
+    for index, finding in enumerate(top_actions, 1):
         st.text(f"{index}. {finding_label(finding)}")
 
     evidence = {item.id: item for item in bundle.evidence}
@@ -354,8 +360,6 @@ def finals_screen() -> None:
                     show_progress(slots, stages)
                     show_scan_error(active_stage, exc)
                     return
-
-            from triage.output._redact import Redactor
 
             redactor = Redactor((str(root), str(temporary)))
             failures = {stage: redactor.text(reason) for stage, reason in result.failures.items()}

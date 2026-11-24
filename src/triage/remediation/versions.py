@@ -20,9 +20,13 @@ class _Loose:
         self.key = tuple(int(x) if x.isdigit() else -1 for x in re.findall(r"\d+|[a-zA-Z]+", s))
 
     def __eq__(self, o):
+        if not isinstance(o, _Loose):
+            return NotImplemented
         return self.key == o.key
 
     def __lt__(self, o):
+        if not isinstance(o, _Loose):
+            return NotImplemented
         return self.key < o.key
 
 
@@ -39,11 +43,21 @@ def V(version: str, ecosystem: str = ""):
 
 def cmp(a: str, b: str, eco: str = "") -> int:
     x, y = V(a, eco), V(b, eco)
+    if type(x) is not type(y):
+        x, y = _Loose(a), _Loose(b)
     try:
         return (x > y) - (x < y)
-    except TypeError:  # 클래스가 섞이면 느슨한 비교
+    except TypeError:
         x, y = _Loose(a), _Loose(b)
         return (x > y) - (x < y)
+
+
+def ordered_versions(versions: list[str], eco: str) -> list[str]:
+    """한 버전 목록에는 같은 비교 규칙을 적용한다."""
+    keys = {version: V(version, eco) for version in versions}
+    if any(isinstance(key, _Loose) for key in keys.values()):
+        return sorted(versions, key=_Loose)
+    return sorted(versions, key=keys.__getitem__)
 
 
 def is_prerelease(v: str) -> bool:
@@ -90,7 +104,7 @@ def in_range(version: str, expr: str, eco: str = "") -> bool:
 def fix_for_line(installed: str, fixed: list[str], eco: str = "") -> str | None:
     """설치 버전보다 큰 수정 버전 중 가장 작은 것(그 버전대의 수정 버전)."""
     higher = [f for f in fixed if cmp(f, installed, eco) > 0]
-    return min(higher, key=lambda f: V(f, eco)) if higher else None
+    return ordered_versions(higher, eco)[0] if higher else None
 
 
 def is_affected(version: str, installed: str, affected_ranges: list[str], fixed: list[str], eco: str = "") -> bool:

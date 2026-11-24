@@ -11,13 +11,18 @@ from time import perf_counter
 from typing import Protocol
 
 from .collect import collect
+from .intel import enrich
 from .lookup import lookup
 from .models import Anomaly, Evidence, Finding, ItemResult, SourceFileScope, Status, TriageBundle, Verdict
 from .output import RunLog, render_pdf, write_cyclonedx
+from .output._common import artifact_evidence
+from .priority import load_policy, prioritize
+from .remediation import remediate
+from .remediation.providers.template import TemplateProvider
 from .scope import apply_scope
 
 
-STATES = ("affected", "not_affected", "undetermined")
+VERDICT_STATUS = {"affected": Status.affected, "not_affected": Status.not_affected, "undetermined": Status.unknown}
 
 
 class Judge(Protocol):
@@ -70,6 +75,36 @@ def _prejudge(findings: list[Finding]) -> list[Finding]:
     return results
 
 
+def _note_judge_degradation(bundle: TriageBundle, log_path: Path, log: Callable[..., None]) -> bool:
+    """판정기가 남기는 기술적 대체 사유를 실행 상태와 사용자 경고로 집계한다."""
+    fallbacks = [
+        item.verdict for item in bundle.findings
+        if item.verdict and item.verdict.decided_by == "fallback" and item.verdict.state == "undetermined"
+    ]
+    unconfigured = failed = 0
+    for verdict in fallbacks:
+        if any(note.startswith("모델 미설정") for note in verdict.verifier_notes):
+            unconfigured += 1
+        elif any(note.startswith("모델 호출 실패:") for note in verdict.verifier_notes):
+            failed += 1
+    count = unconfigured + failed
+    if not count:
+        return False
+    if not failed:
+        reason, explanation = "model_not_configured", "판정 모델이 설정되지 않아"
+    elif not unconfigured:
+        reason, explanation = "model_calls_failed", "판정 모델 호출에 실패해"
+    else:
+        reason, explanation = "model_unavailable", "판정 모델을 사용할 수 없어"
+    suffix = "건 전부 판단 유보로 처리됨" if count == len(bundle.findings) else "건을 판단 유보로 처리했습니다."
+    message = f"{explanation} {count}{suffix}"
+    evidence = artifact_evidence("scan", log_path, message, bundle)
+    bundle.evidence.append(evidence)
+    bundle.anomalies.append(Anomaly(kind="judge_degraded", message=message, evidence_ids=[evidence.id]))
+    log("judge", "degraded", reason=reason, fallback_count=count)
+    return len(fallbacks) == len(bundle.findings)
+
+
 def run_scan(
     label: str, root: Path, out_dir: Path, offline: bool = False, run_no: int = 1, judge: Judge | None = None,
     on_event: Callable[[dict], None] | None = None,
@@ -81,8 +116,9 @@ def run_scan(
         raise ValueError("실행 번호는 1 이상이어야 합니다.")
 
     root, out_dir = Path(root).resolve(), Path(out_dir)
+    started_at = datetime.now(timezone.utc)
     meta = {"label": label, "name": label, "scope": root.name or label,
-            "generated_at": datetime.now(timezone.utc).isoformat()}
+            "generated_at": started_at.isoformat()}
     bundle = TriageBundle(meta=meta)
     paths: dict[str, Path] = {}
     failures: dict[str, str] = {}
@@ -101,13 +137,14 @@ def run_scan(
     def counts() -> dict:
         verdicts = Counter(finding.verdict.state for finding in bundle.findings if finding.verdict)
         return {"components": len(bundle.components), "candidates": len(bundle.findings), "files": len(bundle.files),
-                "verdicts": {state: verdicts[state] for state in STATES}}
+                "verdicts": {state: verdicts[state] for state in VERDICT_STATUS},
+                "prioritized": len(bundle.results), "remediations": len(bundle.remediations)}
 
     def record_failure(stage: str, error: Exception) -> None:
         error_type = type(error).__name__
         reason = f"{stage} 단계 실패 ({error_type})."
         failures[stage] = reason
-        evidence = Evidence(id=f"scan-{len(failures):04d}", kind="tool", file=log_path.name, note=reason)
+        evidence = artifact_evidence("scan", log_path, reason, bundle)
         bundle.evidence.append(evidence)
         bundle.anomalies.append(Anomaly(kind="stage_failure", message=reason, evidence_ids=[evidence.id]))
         run_log.emit(stage, "error", error=error_type, evidence_ids=[evidence.id])
@@ -124,7 +161,7 @@ def run_scan(
             run_log.emit(stage, "end", seconds=round(perf_counter() - started, 6),
                          status="error" if stage in failures else "ok", **counts())
 
-    completed = False
+    completed = judge_degraded = False
     try:
         run_log.emit("run", "start", label=label, run_no=run_no, offline=offline)
         with step("collect"):
@@ -163,10 +200,27 @@ def run_scan(
                     bundle.anomalies = inputs.anomalies
             for finding in bundle.findings:
                 if verdict := finding.verdict:
+                    finding.status = VERDICT_STATUS.get(verdict.state, Status.unknown)
+                    if verdict.rationale_ko:
+                        finding.status_note = verdict.rationale_ko
                     run_log.emit("judge", "decision", finding_key=finding.key, state=verdict.state,
                                  decided_by=verdict.decided_by, decided_at=verdict.decided_at,
                                  evidence_ids=list(dict.fromkeys(ref for item in verdict.item_results
                                                                 for ref in item.evidence_ids)))
+            judge_degraded = _note_judge_degradation(bundle, log_path, log)
+
+        with step("enrich"):
+            enrich(bundle)
+
+        with step("priority"):
+            prioritize(bundle, load_policy(), started_at.astimezone().date())
+            unaffected = {finding.key for finding in bundle.findings if finding.status == Status.not_affected}
+            bundle.results.sort(key=lambda result: result.finding_key in unaffected)
+            for rank, result in enumerate(bundle.results, 1):
+                result.rank = rank
+
+        with step("remediate"):
+            remediate(bundle, TemplateProvider(), llm_limit=0, offline=offline, require_registry=True)
 
         sbom_path = out_dir / f"sbom-{label}.json"
         with step("cyclonedx"):
@@ -178,14 +232,17 @@ def run_scan(
             bundle.meta["limitations"] = [f"취약점 조회에서 응답이나 캐시를 확보하지 못한 요청이 {lookup_misses}건 있습니다."]
         bundle.meta["incomplete_coverage"] = bool(lookup_misses or {"collect", "lookup"}.intersection(failures))
         with step("pdf"):
-            bundle.evidence.extend(render_pdf(bundle, meta, report_path))
+            bundle.evidence.extend(render_pdf(bundle, meta, report_path, log=log))
             paths["report"] = report_path
         completed = True
     finally:
         if judge is None:
             run_log.add_usage(total_tokens=0)
-        status = "partial" if failures else "ok"
-        bundle.evidence.extend(run_log.close(status=status if completed else "error", failed_stages=list(failures),
+        status = "degraded" if judge_degraded else "partial" if failures else "ok"
+        failed_stages = list(failures)
+        if judge_degraded and "judge" not in failed_stages:
+            failed_stages.append("judge")
+        bundle.evidence.extend(run_log.close(status=status if completed else "error", failed_stages=failed_stages,
                                              **counts()))
         paths["log"] = log_path
     return ScanResult(bundle, paths, failures)

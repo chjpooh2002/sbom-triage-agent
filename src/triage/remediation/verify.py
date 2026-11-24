@@ -13,7 +13,7 @@ from dataclasses import dataclass, field
 from typing import Optional
 
 from ..models import Finding
-from .versions import V, cmp, is_affected, is_prerelease, major, variant
+from .versions import cmp, is_affected, is_prerelease, major, ordered_versions, variant
 
 
 @dataclass
@@ -44,7 +44,7 @@ def candidate_versions(group: list[Finding], available: Optional[list[str]]) -> 
     same_variant = [v for v in pool if variant(v) == variant(inst)]
     if variant(inst) and same_variant:
         pool = same_variant
-    return sorted(pool, key=lambda v: V(v, eco))
+    return ordered_versions(pool, eco)
 
 
 def rule_pick(group: list[Finding], available: Optional[list[str]],
@@ -65,7 +65,7 @@ def rule_pick(group: list[Finding], available: Optional[list[str]],
     # 급한 건을 모두 고치고, 실제로 하나라도 줄이는 같은 메이저 버전(급한 건이 없으면 가장 많이 줄이는 버전)
     req_same = [v for v in same_major if not (set(remaining(v, group)) & req) and len(remaining(v, group)) < len(group)]
     if req_same:
-        v = min(req_same, key=lambda x: (len(remaining(x, group)), V(x, _eco(group))))
+        v = min(req_same, key=lambda x: len(remaining(x, group)))
         left = remaining(v, group)
         head = f"급한 취약점 {len(req)}건을 모두 해결" if req else f"취약점 {len(group) - len(left)}건 해결(급한 건 없음)"
         return v, [f"같은 메이저({major(inst)}.x) 안에서 {head}",
@@ -74,7 +74,7 @@ def rule_pick(group: list[Finding], available: Optional[list[str]],
     if clean:
         return clean[0], [f"같은 메이저에는 해결 버전이 없어 메이저 버전 변경({major(inst)} → {major(clean[0])}) 필요"]
     if cands:
-        best = min(cands, key=lambda v: (len(set(remaining(v, group)) & req), len(remaining(v, group)), V(v, _eco(group))))
+        best = min(cands, key=lambda v: (len(set(remaining(v, group)) & req), len(remaining(v, group))))
         return best, [f"모든 취약점을 해결하는 버전 없음 → 남는 취약점이 가장 적은 {best} 선택"]
     return None, ["수정 버전 정보 없음 → 버전 업그레이드로 해결 불가, 완화책 필요"]
 

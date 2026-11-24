@@ -9,6 +9,7 @@ import json
 from collections import OrderedDict
 from typing import Optional
 
+from ..evidence.store import EvidenceStore
 from ..intel.cache import cache_dir
 from ..models import Remediation, Status, TriageBundle
 from .prompt import SYSTEM, RemediationDraft, build_context, user_message
@@ -34,8 +35,8 @@ def _cached_draft(p: Provider, ctx: dict) -> tuple[RemediationDraft, bool]:
 
 
 def remediate(bundle: TriageBundle, provider: Optional[Provider] = None, llm_limit: int = 20,
-              offline: bool = False) -> TriageBundle:
-    if not bundle.results:
+              offline: bool = False, *, require_registry: bool = False) -> TriageBundle:
+    if bundle.findings and not bundle.results:
         raise ValueError("우선순위 결과가 없습니다. prioritize 를 먼저 실행하세요")
     provider = provider or get_provider()
     template = TemplateProvider()
@@ -48,6 +49,9 @@ def remediate(bundle: TriageBundle, provider: Optional[Provider] = None, llm_lim
         groups.setdefault((f.asset_id, f.component.id), []).append(f)
 
     remediations: list[Remediation] = []
+    evidence_store = EvidenceStore(".") if require_registry else None
+    if evidence_store is not None:
+        evidence_store.merge(item for item in bundle.evidence if item.id.startswith("remediate-"))
     stats = {"groups": len(groups), "llm_calls": 0, "llm_cache_hits": 0, "fallbacks": 0, "rejected_targets": 0,
              "registry_unknown": 0}
     warnings = [provider.init_warning] if getattr(provider, "init_warning", "") else []
@@ -59,10 +63,21 @@ def remediate(bundle: TriageBundle, provider: Optional[Provider] = None, llm_lim
         # 반드시 고칠 취약점: 정책상 급한 등급(P1·P2) 또는 KEV. 비어 있으면 같은 메이저에서 가장 많이 줄이는 버전을 고른다
         required = {f.vulnerability.id for f in group if results[f.key].tier.rank <= 2 or f.signals.kev.listed}
         rule_target, rule_notes = rule_pick(group, available, required)
-        ctx = build_context(group, results, bundle.asset(asset_id), candidate_versions(group, available),
+        candidates = candidate_versions(group, available)
+        notes = []
+        for finding in group:
+            suggested = finding.hints.get("judge_fix_version")
+            if not isinstance(suggested, str) or suggested not in finding.vulnerability.fixed_versions:
+                continue
+            proposal = verify(suggested, group, available, required | {finding.vulnerability.id})
+            if proposal.ok and suggested in candidates:
+                rule_target, rule_notes = suggested, ["판정에서 제안한 공개 수정 버전 후보를 채택"]
+                break
+            notes.append(f"판정 제안 버전 {suggested} 기각 ({', '.join(proposal.notes)})")
+        ctx = build_context(group, results, bundle.asset(asset_id), candidates,
                             rule_target, rule_notes)
         use_llm = provider.name != "template" and i < llm_limit
-        used, fallback, notes = provider.name if use_llm else "template", False, []
+        used, fallback = provider.name if use_llm else "template", False
         if use_llm:
             try:
                 draft, hit = _cached_draft(provider, ctx)
@@ -86,9 +101,15 @@ def remediate(bundle: TriageBundle, provider: Optional[Provider] = None, llm_lim
                 draft.steps = [s.replace(str(draft.target_version), final.target) if draft.target_version else s
                                for s in draft.steps]
         notes += final.notes
+        verified = final.ok and (not require_registry or available is not None)
+        if verified and evidence_store is not None:
+            evidence = evidence_store.add("remediate", kind="tool", command="remediation.registry.list_versions",
+                                          note=f"{comp.display}의 목표 버전 {final.target}이 레지스트리에 존재함")
+            bundle.evidence.append(evidence)
+            notes.append(f"레지스트리 버전 확인 근거 [{evidence.id}]")
         for f in group:
             remediations.append(Remediation(
-                finding_key=f.key, target_version=final.target, verified=final.ok, verify_notes=notes,
+                finding_key=f.key, target_version=final.target, verified=verified, verify_notes=notes,
                 summary_ko=draft.summary_ko, steps=draft.steps, workaround=draft.workaround,
                 provider=f"{used}:{provider.model}" if used != "template" else "template", fallback_used=fallback))
     bundle.remediations = remediations

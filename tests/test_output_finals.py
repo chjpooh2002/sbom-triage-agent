@@ -3,6 +3,7 @@ import os
 import shutil
 import stat
 import subprocess
+import tempfile
 from pathlib import Path
 
 import pytest
@@ -11,7 +12,7 @@ from jsonschema import ValidationError
 from triage.models import Anomaly, Finding, PriorityResult, Remediation, TriageBundle, Verdict, Vulnerability
 from triage.output import RunLog, render_pdf, validate_cyclonedx, write_cyclonedx
 from triage.output._common import write_artifact
-from triage.output.report_pdf import _context
+from triage.output.report_pdf import _context, _engines
 
 
 @pytest.fixture
@@ -172,6 +173,121 @@ def _pdf_text(bundle, out, **meta):
     return subprocess.check_output([pdftotext, "-enc", "UTF-8", str(out), "-"], encoding="utf-8")
 
 
+@pytest.fixture
+def missing_weasyprint(monkeypatch):
+    def unavailable(_page):
+        raise OSError("Pango DLL unavailable")
+
+    monkeypatch.setattr(_engines, "_render_weasyprint", unavailable)
+
+
+@pytest.mark.parametrize(("configured_timeout", "timeout"), [(None, 240), ("45", 45)])
+def test_pdf_uses_chromium_with_temporary_profile(
+    bundle, tmp_path, monkeypatch, missing_weasyprint, configured_timeout, timeout,
+):
+    browser = tmp_path / "example browser" / "example-chromium.exe"
+    scratch_parent = tmp_path / "system-temp"
+    scratch_parent.mkdir()
+    monkeypatch.setattr(tempfile, "tempdir", str(scratch_parent))
+    if configured_timeout is None:
+        monkeypatch.delenv("SBOMTRIAGE_PDF_TIMEOUT", raising=False)
+    else:
+        monkeypatch.setenv("SBOMTRIAGE_PDF_TIMEOUT", configured_timeout)
+    times = iter((10.0, 10.125, 12.5))
+    monkeypatch.setattr(_engines, "perf_counter", lambda: next(times))
+    monkeypatch.setenv("SBOMTRIAGE_PDF_BROWSER", str(browser))
+    monkeypatch.setattr(_engines.shutil, "which", lambda name: str(browser) if name == str(browser) else None)
+    out = tmp_path / "output" / "result.pdf"
+    content = b"%PDF-1.7\n"
+    events = []
+    scratch = []
+
+    def run(arguments, **options):
+        assert arguments[0] == str(browser)
+        assert "--headless=new" in arguments
+        assert "--no-pdf-header-footer" in arguments
+        assert options["timeout"] == timeout
+        pdf = Path(next(value for value in arguments if value.startswith("--print-to-pdf=")).split("=", 1)[1])
+        profile = Path(next(value for value in arguments if value.startswith("--user-data-dir=")).split("=", 1)[1])
+        assert profile.parent == pdf.parent
+        assert pdf.parent.parent == scratch_parent
+        scratch.append(pdf.parent)
+        html = pdf.with_suffix(".html")
+        assert arguments[-1] == html.as_uri()
+        assert "NotoSansKR.ttf" in html.read_text(encoding="utf-8")
+        pdf.write_bytes(content)
+
+    def event(stage, name, **data):
+        events.append((stage, name, data))
+
+    monkeypatch.setattr(_engines.subprocess, "run", run)
+    evidence, = render_pdf(bundle, {}, out, log=event)
+    assert out.read_bytes() == content
+    assert scratch and not scratch[0].exists()
+    assert evidence.id == "pdf-0001"
+    assert "chromium:example-chromium.exe" in evidence.note
+    assert str(browser.parent) not in evidence.note
+    assert events == [("pdf", "engine", {
+        "engine": "chromium:example-chromium.exe", "weasyprint_seconds": 0.125, "browser_seconds": 2.375,
+    })]
+
+
+def test_chromium_returns_pdf_when_profile_cleanup_fails(tmp_path, monkeypatch):
+    monkeypatch.setattr(tempfile, "tempdir", str(tmp_path))
+    original_unlink = os.unlink
+    failed = []
+    content = b"%PDF-1.7\n"
+
+    def run(arguments, **options):
+        profile = Path(next(value for value in arguments if value.startswith("--user-data-dir=")).split("=", 1)[1])
+        profile.mkdir()
+        (profile / "locked-profile-file").write_bytes(b"locked")
+        (profile.parent / "report.pdf").write_bytes(content)
+
+    def locked_unlink(path, *args, **kwargs):
+        if Path(path).name == "locked-profile-file":
+            failed.append(path)
+            raise PermissionError("프로필 파일 사용 중")
+        return original_unlink(path, *args, **kwargs)
+
+    with monkeypatch.context() as mocks:
+        mocks.setattr(_engines.subprocess, "run", run)
+        mocks.setattr(os, "unlink", locked_unlink)
+        assert _engines._print_chromium("<html></html>", tmp_path / "example.exe") == content
+    assert failed
+
+
+@pytest.mark.parametrize("browser_exists", [False, True])
+def test_pdf_reports_unavailable_engines(bundle, tmp_path, monkeypatch, missing_weasyprint, browser_exists):
+    browser = tmp_path / "example-chromium.exe" if browser_exists else None
+    monkeypatch.setattr(_engines, "_find_browser", lambda: browser)
+
+    def timeout(*args):
+        raise subprocess.TimeoutExpired(str(browser), 240)
+
+    monkeypatch.setattr(_engines, "_print_chromium", timeout)
+    out = tmp_path / "report.pdf"
+    with pytest.raises(OSError, match="WeasyPrint 라이브러리와 Edge/Chrome을 찾지 못함") as error:
+        render_pdf(bundle, {}, out)
+    assert str(tmp_path) not in str(error.value)
+    assert ("TimeoutExpired" if browser_exists else "(OSError)") in str(error.value)
+    assert not out.exists()
+
+
+def test_chromium_pdf_extracts_korean_and_evidence_location(bundle, tmp_path, missing_weasyprint):
+    browser = _engines._find_browser()
+    pdftotext = shutil.which("pdftotext")
+    if browser is None or pdftotext is None:
+        pytest.skip("Chromium 계열 브라우저와 pdftotext가 필요합니다.")
+    out = tmp_path / "report.pdf"
+    evidence, = render_pdf(bundle, {"name": "한글 예제 프로젝트"}, out)
+    assert f"chromium:{browser.name}" in evidence.note
+    text = subprocess.check_output([pdftotext, "-enc", "UTF-8", str(out), "-"], encoding="utf-8")
+    assert "취약점 조치 보고서" in text
+    assert "한글 예제 프로젝트" in text
+    assert "app-settings.json:3-5" in text
+
+
 def test_pdf_groups_rule_deferred_candidates_with_shared_source_evidence(bundle):
     first = bundle.findings[2]
     first.verdict.decided_by = "rule:insufficient_evidence"
@@ -228,7 +344,7 @@ def test_pdf_extracts_korean_report_and_work_request(bundle, tmp_path):
         assert unrelated not in citations
     assert "unreferenced.fixture" not in text
 
-    summary = main[main.index("먼저 고칠 것 3개"):main.index("입력 이상")]
+    summary = main[main.index("먼저 고칠 것 1개"):main.index("입력 이상")]
     assert "FIXTURE-0 · fixture-parser · P1 · 목표 버전 1.2" in summary
     assert "FIXTURE-1" not in summary
     assert "FIXTURE-2" not in summary
@@ -261,6 +377,8 @@ def test_pdf_extracts_korean_report_and_work_request(bundle, tmp_path):
 def test_pdf_explicitly_describes_no_action_states(bundle, only_not_affected, tmp_path):
     bundle.findings = [bundle.findings[1]] if only_not_affected else []
     text = " ".join(_pdf_text(bundle, tmp_path / "report.pdf").split())
+    assert "먼저 고칠 것 — 영향 있음 확정 항목 없음" in text
+    assert "먼저 고칠 것 3개" not in text
     assert "이번 점검에서 확인된 조치 대상이 없습니다." in text
     expected = "모두 영향 없음으로 판정했습니다." if only_not_affected else "취약점 후보가 0건입니다."
     assert expected in text

@@ -20,6 +20,9 @@ SBOM / 스캔 / 자산표  →  변환기 → 공통 구조  →  KEV·EPSS 캐�
 
 ## 빠른 시작
 
+PDF는 WeasyPrint를 사용하며, 실행할 수 없으면 설치된 Edge 또는 Chrome으로 인쇄합니다. 해당 브라우저가 있는 Windows에서는 PDF 생성용 추가 설치가 필요 없습니다.
+`.env`에 판정 모델과 키 설정이 없으면 모델 판정이 필요한 후보는 모두 ‘판단 유보’로 기록되며 보고서 맨 앞에 경고가 표시됩니다.
+
 ```bash
 uv sync
 uv run triage fetch-intel                 # KEV·EPSS 전체 파일 캐시 (본선 전날 꼭 실행)

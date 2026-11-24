@@ -12,7 +12,7 @@ from zipfile import ZipFile, ZipInfo
 import pytest
 from streamlit.testing.v1 import AppTest
 
-from triage.models import TriageBundle
+from triage.models import Anomaly, TriageBundle
 
 
 APP = Path(__file__).resolve().parents[1] / "app" / "streamlit_app.py"
@@ -93,6 +93,7 @@ def test_finals_calls_pipeline_and_keeps_downloads(monkeypatch, tmp_path):
     signature = inspect.signature(backend.run_scan) if backend else None
     calls = []
     judge_provider = object()
+    warning = "판정 모델이 설정되지 않아 1건 전부 판단 유보로 처리됨"
 
     def scan(label, root, out_dir, offline=False, run_no=1, judge=None, on_event=None):
         if signature is not None and "on_event" in signature.parameters:
@@ -107,7 +108,8 @@ def test_finals_calls_pipeline_and_keeps_downloads(monkeypatch, tmp_path):
             path = out_dir / name
             path.write_bytes(b"test download")
             paths[kind] = path
-        return SimpleNamespace(bundle=TriageBundle(), paths=paths, failures={})
+        bundle = TriageBundle(anomalies=[Anomaly(kind="judge_degraded", message=warning)])
+        return SimpleNamespace(bundle=bundle, paths=paths, failures={})
 
     install_backend(monkeypatch, scan, judge=judge_provider)
     app = AppTest.from_file(str(APP), default_timeout=60).run()
@@ -116,6 +118,7 @@ def test_finals_calls_pipeline_and_keeps_downloads(monkeypatch, tmp_path):
     submit_server_path(app, tmp_path, offline=True)
     assert not app.exception
     assert not app.error
+    assert app.warning[0].value == warning
     assert calls[0][:2] == ("테스트 서비스", tmp_path.resolve())
     assert calls[0][3:] == (True, judge_provider)
     assert not calls[0][2].exists()
